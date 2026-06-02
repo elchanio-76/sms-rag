@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sms-rag"
+version = "0.1.0"
+description = "RAG system for querying SMS/WhatsApp conversation data stored as PDFs"
+requires-python = ">=3.11"
+dependencies = [
+    "pymupdf>=1.23.0",
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.4.0",
+    "rank-bm25>=0.2.2",
+    "langchain>=0.1.0",
+    "langchain-community>=0.0.1",
+    "gradio>=4.0.0",
+    "ollama>=0.1.0",
+    "boto3>=1.28.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "hypothesis>=6.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["sms_rag*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
