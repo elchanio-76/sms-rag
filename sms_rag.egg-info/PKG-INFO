@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: sms-rag
+Version: 0.1.0
+Summary: RAG system for querying SMS/WhatsApp conversation data stored as PDFs
+Requires-Python: >=3.11
+Requires-Dist: pymupdf>=1.23.0
+Requires-Dist: sentence-transformers>=2.2.0
+Requires-Dist: chromadb>=0.4.0
+Requires-Dist: rank-bm25>=0.2.2
+Requires-Dist: langchain>=0.1.0
+Requires-Dist: langchain-community>=0.0.1
+Requires-Dist: gradio>=4.0.0
+Requires-Dist: ollama>=0.1.0
+Requires-Dist: boto3>=1.28.0
+Requires-Dist: pyyaml>=6.0
+Provides-Extra: dev
+Requires-Dist: hypothesis>=6.0.0; extra == "dev"
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"

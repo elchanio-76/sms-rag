@@ -1,0 +1,39 @@
+# SMS RAG Configuration
+# All values can be overridden with environment variables using the SMS_RAG_ prefix.
+# Example: SMS_RAG_DATA_DIR=/path/to/data overrides data_dir below.
+
+# Paths
+data_dir: data
+vector_store_path: storage/chroma
+bm25_index_path: storage/bm25_index.pkl
+session_db_path: storage/sessions.db
+
+# Embedding model
+embedding_model_name: intfloat/multilingual-e5-large
+
+# Chunking
+chunk_size: 20
+chunk_overlap: 5
+
+# Retrieval
+semantic_weight: 0.5
+top_k: 5
+max_context_chunks: 10
+
+# LLM provider: "ollama" or "bedrock"
+llm_provider: ollama
+ollama_model: llama3.1
+ollama_base_url: http://localhost:11434
+# bedrock_model_id: null  # Required when llm_provider is "bedrock"
+# bedrock_region: us-east-1
+
+# Vector store provider: "chromadb", "qdrant", or "pinecone"
+vector_store_provider: chromadb
+
+# Server
+server_host: 0.0.0.0
+server_port: 7860
+
+# Timeouts (seconds)
+llm_timeout: 60
+vector_store_timeout: 30

@@ -1,0 +1,353 @@
+"""PDF parser for extracting messages from conversation PDFs using PyMuPDF."""
+
+import logging
+import re
+from datetime import datetime
+from pathlib import Path
+
+import pymupdf
+
+from sms_rag.shared.models import Message, ParsedConversation
+
+logger = logging.getLogger(__name__)
+
+# Greek day abbreviations and full names
+_GREEK_DAYS_ABBR = r"(?:Δευ|Τρί|Τετ|Πέµ|Παρ|Σάβ|Κυρ)"
+_GREEK_DAYS_FULL = r"(?:Δευτέρα|Τρίτη|Τετάρτη|Πέµπτη|Παρασκευή|Σάββατο|Κυριακή)"
+_GREEK_MONTHS = r"(?:Ιαν|Φεβ|Μαρ|Απρ|Μαΐ|Ιουν|Ιουλ|Αυγ|Σεπ|Οκτ|Νοε|Δεκ)"
+
+# Date/time patterns found in the PDFs:
+# "Παρ 20 Φεβ, 10:30 πµ" - abbreviated day + day number + month + time
+# "Παρασκευή 6:13 µµ" - full day name + time (no date)
+# "Δευ 15 Δεκ, 7:31 µµ" - abbreviated day + day number + month + time
+_DATE_PATTERN_FULL = re.compile(
+    rf"^({_GREEK_DAYS_ABBR})\s+(\d{{1,2}})\s+({_GREEK_MONTHS}),?\s+(\d{{1,2}}):(\d{{2}})\s*(πµ|µµ)$",
+    re.MULTILINE,
+)
+
+_DATE_PATTERN_DAY_ONLY = re.compile(
+    rf"^({_GREEK_DAYS_FULL})\s+(\d{{1,2}}):(\d{{2}})\s*(πµ|µµ)$",
+    re.MULTILINE,
+)
+
+# Message type indicators
+_MESSAGE_TYPE_PATTERN = re.compile(
+    r"^(iMessage|Γραπτό µήνυµα\s*•\s*SMS|Γραπτό µήνυµα\s*•\s*RCS)$",
+    re.MULTILINE,
+)
+
+# Phone number pattern (international format)
+_PHONE_PATTERN = re.compile(r"\+\d{10,15}")
+
+# Lines to skip (system indicators, not message content)
+_SKIP_PATTERNS = [
+    re.compile(r"^EIXATE\s+\d+\s+KΛHƩH:"),
+    re.compile(r"^Αναγνώστηκε\s*\d*/?.*$"),
+    re.compile(r"^\(\d+\)\s+\d{2}/\d{2}\s+\d{2}:\d{2}$"),
+]
+
+# Delivery receipt pattern - acts as a message boundary separator
+_DELIVERY_RECEIPT_PATTERN = re.compile(r"^Παραδόθηκε$")
+
+# Greek month name to month number mapping
+_MONTH_MAP = {
+    "Ιαν": 1,
+    "Φεβ": 2,
+    "Μαρ": 3,
+    "Απρ": 4,
+    "Μαΐ": 5,
+    "Ιουν": 6,
+    "Ιουλ": 7,
+    "Αυγ": 8,
+    "Σεπ": 9,
+    "Οκτ": 10,
+    "Νοε": 11,
+    "Δεκ": 12,
+}
+
+
+def _parse_timestamp_full(match: re.Match) -> datetime | None:
+    """Parse a full date/time match (day abbr + day num + month + time)."""
+    try:
+        _day_name, day_num, month_name, hour, minute, period = match.groups()
+        month = _MONTH_MAP.get(month_name)
+        if month is None:
+            return None
+        hour_int = int(hour)
+        minute_int = int(minute)
+        # Convert to 24-hour format
+        if period == "µµ" and hour_int != 12:
+            hour_int += 12
+        elif period == "πµ" and hour_int == 12:
+            hour_int = 0
+        # We don't have year info - use a default year
+        # The actual year isn't in the PDF, so we use a reasonable default
+        return datetime(2024, month, int(day_num), hour_int, minute_int)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_timestamp_day_only(match: re.Match) -> datetime | None:
+    """Parse a day-only date/time match (full day name + time, no date)."""
+    try:
+        _day_name, hour, minute, period = match.groups()
+        hour_int = int(hour)
+        minute_int = int(minute)
+        if period == "µµ" and hour_int != 12:
+            hour_int += 12
+        elif period == "πµ" and hour_int == 12:
+            hour_int = 0
+        # No date available, return None for timestamp
+        return None
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalize_message_type(raw_type: str) -> str:
+    """Normalize message type string to standard form."""
+    raw_type = raw_type.strip()
+    if raw_type == "iMessage":
+        return "iMessage"
+    elif "SMS" in raw_type:
+        return "SMS"
+    elif "RCS" in raw_type:
+        return "RCS"
+    return raw_type
+
+
+def _is_skip_line(line: str) -> bool:
+    """Check if a line should be skipped (system indicator, not message content)."""
+    for pattern in _SKIP_PATTERNS:
+        if pattern.match(line):
+            return True
+    return False
+
+
+class PDFParser:
+    """Parses conversation PDFs into structured Message objects."""
+
+    def parse(self, pdf_path: Path) -> ParsedConversation:
+        """Parse a single PDF file into structured messages.
+
+        Args:
+            pdf_path: Path to the PDF file to parse.
+
+        Returns:
+            ParsedConversation with extracted messages and metadata.
+            On error, returns an empty conversation with errors listed.
+        """
+        source_filename = pdf_path.name
+        participant_name = pdf_path.stem
+
+        try:
+            doc = pymupdf.open(str(pdf_path))
+        except Exception as e:
+            error_msg = f"Failed to open PDF '{source_filename}': {e}"
+            logger.error(error_msg)
+            return ParsedConversation(
+                participant_name=participant_name,
+                source_filename=source_filename,
+                messages=[],
+                errors=[error_msg],
+            )
+
+        try:
+            # Check for encrypted/password-protected PDFs
+            if doc.is_encrypted:
+                error_msg = f"PDF '{source_filename}' is password-protected"
+                logger.error(error_msg)
+                doc.close()
+                return ParsedConversation(
+                    participant_name=participant_name,
+                    source_filename=source_filename,
+                    messages=[],
+                    errors=[error_msg],
+                )
+
+            # Extract all text from all pages
+            full_text = ""
+            for page in doc:
+                full_text += page.get_text()
+
+            doc.close()
+
+            if not full_text.strip():
+                error_msg = f"PDF '{source_filename}' contains no extractable text"
+                logger.warning(error_msg)
+                return ParsedConversation(
+                    participant_name=participant_name,
+                    source_filename=source_filename,
+                    messages=[],
+                    errors=[error_msg],
+                )
+
+            messages = self._extract_messages(full_text)
+
+            return ParsedConversation(
+                participant_name=participant_name,
+                source_filename=source_filename,
+                messages=messages,
+                errors=[],
+            )
+
+        except Exception as e:
+            error_msg = f"Error processing PDF '{source_filename}': {e}"
+            logger.error(error_msg)
+            if not doc.is_closed:
+                doc.close()
+            return ParsedConversation(
+                participant_name=participant_name,
+                source_filename=source_filename,
+                messages=[],
+                errors=[error_msg],
+            )
+
+    def _extract_messages(self, text: str) -> list[Message]:
+        """Extract messages from raw PDF text.
+
+        Detects message boundaries using date/time stamp patterns and
+        message type indicators. Groups text between boundaries into
+        individual messages.
+        """
+        lines = text.split("\n")
+        messages: list[Message] = []
+
+        current_message_type: str | None = None
+        current_timestamp: datetime | None = None
+        current_phone: str | None = None
+        current_text_lines: list[str] = []
+        in_message = False
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Check for message type indicator (appears before date)
+            type_match = _MESSAGE_TYPE_PATTERN.match(line)
+            if type_match:
+                # Save any accumulated message before starting new context
+                if in_message and current_text_lines:
+                    messages.append(
+                        Message(
+                            text="\n".join(current_text_lines).strip(),
+                            timestamp=current_timestamp,
+                            message_type=current_message_type,
+                            phone_number=current_phone,
+                        )
+                    )
+                    current_text_lines = []
+
+                current_message_type = _normalize_message_type(type_match.group(1))
+                current_timestamp = None
+                current_phone = None
+                in_message = False
+                i += 1
+                continue
+
+            # Check for full date pattern (day abbr + number + month + time)
+            date_full_match = _DATE_PATTERN_FULL.match(line)
+            if date_full_match:
+                # Save any accumulated message
+                if in_message and current_text_lines:
+                    messages.append(
+                        Message(
+                            text="\n".join(current_text_lines).strip(),
+                            timestamp=current_timestamp,
+                            message_type=current_message_type,
+                            phone_number=current_phone,
+                        )
+                    )
+                    current_text_lines = []
+
+                current_timestamp = _parse_timestamp_full(date_full_match)
+                # Keep current_phone from context (e.g., phone seen after type indicator)
+                in_message = True
+                i += 1
+                continue
+
+            # Check for day-only date pattern (full day name + time)
+            date_day_match = _DATE_PATTERN_DAY_ONLY.match(line)
+            if date_day_match:
+                # Save any accumulated message
+                if in_message and current_text_lines:
+                    messages.append(
+                        Message(
+                            text="\n".join(current_text_lines).strip(),
+                            timestamp=current_timestamp,
+                            message_type=current_message_type,
+                            phone_number=current_phone,
+                        )
+                    )
+                    current_text_lines = []
+
+                current_timestamp = _parse_timestamp_day_only(date_day_match)
+                # Keep current_phone from context
+                in_message = True
+                i += 1
+                continue
+
+            # Check for phone numbers in the line
+            phone_match = _PHONE_PATTERN.search(line)
+            if phone_match:
+                current_phone = phone_match.group(0)
+                # If this line is ONLY a phone number (standalone), skip it as content
+                if line.strip() == phone_match.group(0):
+                    i += 1
+                    continue
+                # If the phone is embedded in text, continue to add the line as content
+
+            # Delivery receipt acts as a boundary - save current message and start new
+            if _DELIVERY_RECEIPT_PATTERN.match(line):
+                if in_message and current_text_lines:
+                    messages.append(
+                        Message(
+                            text="\n".join(current_text_lines).strip(),
+                            timestamp=current_timestamp,
+                            message_type=current_message_type,
+                            phone_number=current_phone,
+                        )
+                    )
+                    current_text_lines = []
+                    # Keep current context (type, timestamp) for the response
+                    # but mark that we're ready for new text
+                    in_message = True
+                i += 1
+                continue
+
+            # Skip system indicator lines
+            if _is_skip_line(line):
+                i += 1
+                continue
+
+            # Skip empty lines
+            if not line:
+                i += 1
+                continue
+
+            # Accumulate message text
+            if in_message:
+                current_text_lines.append(line)
+            else:
+                # Text before any date marker - still capture it
+                # This handles cases where a message type appears but no date follows immediately
+                if current_message_type is not None:
+                    in_message = True
+                    current_text_lines.append(line)
+
+            i += 1
+
+        # Don't forget the last message
+        if current_text_lines:
+            messages.append(
+                Message(
+                    text="\n".join(current_text_lines).strip(),
+                    timestamp=current_timestamp,
+                    message_type=current_message_type,
+                    phone_number=current_phone,
+                )
+            )
+
+        # Filter out empty messages
+        messages = [m for m in messages if m.text.strip()]
+
+        return messages
