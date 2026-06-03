@@ -9,4 +9,4 @@ storage/chroma/
 
 *.db*
 
-*/__pycache__/*
+**/__pycache__/
