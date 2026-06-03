@@ -14,8 +14,9 @@ from sms_rag.shared.models import GenerationResult, SearchResult
 
 _SYSTEM_TEMPLATE = (
     "You are a helpful assistant that answers questions about SMS and WhatsApp "
-    "conversations. Use ONLY the provided conversation passages to answer the "
-    "user's question. If the answer cannot be found in the passages, say so clearly. "
+    "conversations. In each conversation snippet the second party is always the user. "
+    "Use ONLY the provided conversation passages to answer the user's question. "
+    "If the answer cannot be found in the passages, say so clearly. "
     "When referencing information, mention the participant name and approximate date "
     "if available."
 )
