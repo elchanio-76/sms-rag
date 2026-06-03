@@ -271,7 +271,6 @@ class ChatInterface:
 
             chatbot = gr.Chatbot(
                 value=initial_history,
-                type="messages",
                 label="SMS RAG",
                 show_label=True,
             )
@@ -279,14 +278,11 @@ class ChatInterface:
             gr.ChatInterface(
                 fn=self._respond,
                 chatbot=chatbot,
-                type="messages",
                 title="SMS RAG Chat",
                 description=(
                     "Ask questions about your SMS/WhatsApp conversations. "
                     "Supports Greek, English, and Greeklish."
                 ),
-                retry_btn="🔄 Retry",
-                clear_btn="🗑️ Clear",
             )
 
         demo.launch(server_name=host, server_port=port)

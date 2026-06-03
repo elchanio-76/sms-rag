@@ -22,7 +22,7 @@ max_context_chunks: 10
 
 # LLM provider: "ollama" or "bedrock"
 llm_provider: ollama
-ollama_model: llama3.1
+ollama_model: llama3.1:8b
 ollama_base_url: http://localhost:11434
 # bedrock_model_id: null  # Required when llm_provider is "bedrock"
 # bedrock_region: us-east-1
