@@ -64,7 +64,7 @@ This plan implements a Retrieval-Augmented Generation system for SMS/WhatsApp co
     - Leave missing metadata fields as `None`
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-  - [x] 3.2 Write property tests for PDF parsing (Properties 1, 2, 3)
+  - [x] 3.2 Write property tests [ython -m pytest for PDF parsing (Properties 1, 2, 3)
     - **Property 1: Message Chronological Order Preservation**
     - **Property 2: Metadata Extraction Completeness**
     - **Property 3: Filename to Participant Name Derivation**
