@@ -64,7 +64,7 @@ This implementation improves RAG context presentation through two complementary 
     - Orphan receipts (no preceding message) are ignored
     - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-  - [-] 3.2 Integrate coordinate and receipt detection into `_extract_messages`
+  - [x] 3.2 Integrate coordinate and receipt detection into `_extract_messages`
     - Modify `parse()` to first attempt coordinate-based classification
     - If coordinate detection is reliable (≥80% threshold met), apply coordinate roles to all messages
     - If coordinate detection fails, apply delivery receipt heuristic as fallback

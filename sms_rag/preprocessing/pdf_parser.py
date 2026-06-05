@@ -246,8 +246,66 @@ class PDFParser:
 
         return classified
 
+    def _apply_coordinate_roles(
+        self, messages: list[Message], classification: dict[str, str]
+    ) -> None:
+        """Apply coordinate-based speaker roles to messages.
+
+        For each message, checks if its text is contained within any
+        classified block's text, or if any classified block's text is
+        contained within the message text. Assigns the corresponding
+        speaker role if a match is found; otherwise leaves as "unknown".
+
+        Args:
+            messages: List of Message objects to update in-place.
+            classification: Dict mapping block text → speaker_role
+                ("sent" or "received").
+        """
+        for msg in messages:
+            role = self._find_coordinate_role(msg.text, classification)
+            if role is not None:
+                msg.speaker_role = role
+            else:
+                msg.speaker_role = "unknown"
+
+    def _find_coordinate_role(
+        self, message_text: str, classification: dict[str, str]
+    ) -> str | None:
+        """Find the coordinate-based role for a message text.
+
+        Checks if message_text matches, is a substring of, or contains
+        any classified block text. Returns the first matching role found,
+        or None if no match.
+
+        Args:
+            message_text: The text of the message to look up.
+            classification: Dict mapping block text → speaker_role.
+
+        Returns:
+            "sent" or "received" if a match is found, None otherwise.
+        """
+        # Exact match first
+        if message_text in classification:
+            return classification[message_text]
+
+        # Check if message text is a substring of any classified block
+        for block_text, role in classification.items():
+            if message_text in block_text:
+                return role
+
+        # Check if any classified block text is a substring of the message
+        for block_text, role in classification.items():
+            if block_text in message_text:
+                return role
+
+        return None
+
     def parse(self, pdf_path: Path) -> ParsedConversation:
         """Parse a single PDF file into structured messages.
+
+        Performs coordinate-based speaker classification as the primary
+        method. If coordinate detection is unreliable (<80% threshold),
+        falls back to delivery receipt heuristic for speaker role assignment.
 
         Args:
             pdf_path: Path to the PDF file to parse.
@@ -284,10 +342,16 @@ class PDFParser:
                     errors=[error_msg],
                 )
 
-            # Extract all text from all pages
+            # Single pass: extract text and text blocks with coordinates
             full_text = ""
+            all_text_blocks: list[TextBlock] = []
+            page_width: float = 0.0
+
             for page in doc:
                 full_text += page.get_text()
+                all_text_blocks.extend(self._extract_text_blocks_with_coords(page))
+                if page_width == 0.0:
+                    page_width = page.rect.width
 
             doc.close()
 
@@ -301,7 +365,26 @@ class PDFParser:
                     errors=[error_msg],
                 )
 
+            # Extract messages (also populates _receipt_followed_indices)
             messages = self._extract_messages(full_text)
+
+            # Attempt coordinate-based classification first
+            coord_classification = self._classify_speaker_by_coordinates(
+                all_text_blocks, page_width
+            )
+
+            if coord_classification is not None:
+                # Coordinate classification is reliable — apply it
+                self._apply_coordinate_roles(messages, coord_classification)
+            else:
+                # Coordinate classification unreliable — use receipt
+                # heuristic as fallback
+                self._assign_speaker_roles_by_receipt(messages)
+
+            # Ensure every message has exactly one valid speaker_role
+            for msg in messages:
+                if msg.speaker_role not in ("sent", "received", "unknown"):
+                    msg.speaker_role = "unknown"
 
             return ParsedConversation(
                 participant_name=participant_name,
