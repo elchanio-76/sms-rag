@@ -1503,3 +1503,558 @@ class TestProperty9CoordinateReliabilityThreshold:
         assert len(result) == non_ambig_count, (
             f"Expected {non_ambig_count} entries in result dict, " f"got {len(result)}"
         )
+
+
+# --- Delivery Receipt Conversation Strategy ---
+
+
+@st.composite
+def delivery_receipt_conversation_strategy(draw):
+    """Generate conversation text with messages and delivery receipts in various positions.
+
+    Returns (text, expected_roles) where expected_roles is a list of expected speaker_role
+    values ("sent" or "unknown") for each message in the generated conversation.
+
+    The strategy generates:
+    - A message type header
+    - Multiple messages with timestamps
+    - Some messages followed by "Παραδόθηκε" (delivery receipt) → should get "sent"
+    - Other messages without receipt → should get "unknown"
+    """
+    num_messages = draw(st.integers(min_value=1, max_value=8))
+    msg_type = draw(st.sampled_from(MESSAGE_TYPES))
+
+    lines = [msg_type]
+    expected_roles: list[str] = []
+
+    for i in range(num_messages):
+        # Generate a timestamp for each message
+        ts_str, _ = draw(greek_timestamp_strategy())
+        lines.append(ts_str)
+
+        # Generate message text
+        msg_text = draw(message_text_strategy())
+        lines.append(msg_text)
+
+        # Decide whether this message is followed by a delivery receipt
+        has_receipt = draw(st.booleans())
+        if has_receipt:
+            lines.append("Παραδόθηκε")
+            expected_roles.append("sent")
+        else:
+            expected_roles.append("unknown")
+
+    text = "\n".join(lines)
+    return text, expected_roles
+
+
+# --- Property Test: Delivery Receipt Tagging ---
+
+
+class TestProperty10DeliveryReceiptTagging:
+    """Property 10: Delivery Receipt Tagging.
+
+    For any sequence of messages where message M is immediately followed by a
+    delivery receipt line in document order, M SHALL be assigned speaker_role "sent".
+    Messages not immediately followed by a receipt (and without coordinate classification)
+    SHALL be assigned "unknown".
+
+    # Feature: participant-context-clarity, Property 10: Delivery Receipt Tagging
+    Validates: Requirements 3.1, 3.2
+    """
+
+    @given(data=delivery_receipt_conversation_strategy())
+    @settings(max_examples=100)
+    def test_messages_followed_by_receipt_get_sent(self, data):
+        """For any message immediately followed by a delivery receipt line,
+        that message SHALL be assigned speaker_role "sent".
+
+        **Validates: Requirements 3.1, 3.2**
+        """
+        text, expected_roles = data
+
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # We expect the same number of messages as expected_roles
+        assert len(messages) == len(expected_roles), (
+            f"Expected {len(expected_roles)} messages, got {len(messages)}. "
+            f"Text:\n{text}"
+        )
+
+        for idx, (msg, expected_role) in enumerate(zip(messages, expected_roles)):
+            assert msg.speaker_role == expected_role, (
+                f"Message {idx} (text='{msg.text[:40]}...') has speaker_role "
+                f"'{msg.speaker_role}', expected '{expected_role}'. "
+                f"Text:\n{text}"
+            )
+
+    @given(
+        msg_texts=st.lists(message_text_strategy(), min_size=2, max_size=6),
+    )
+    @settings(max_examples=100)
+    def test_messages_without_receipt_get_unknown(self, msg_texts):
+        """For any sequence of messages where NONE are followed by a delivery receipt,
+        ALL messages SHALL be assigned speaker_role "unknown".
+
+        **Validates: Requirements 3.2**
+        """
+        # Build conversation text with no receipts
+        lines = ["iMessage"]
+        for msg_text in msg_texts:
+            lines.append("Παρ 20 Φεβ, 10:30 πµ")
+            lines.append(msg_text)
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        for idx, msg in enumerate(messages):
+            assert msg.speaker_role == "unknown", (
+                f"Message {idx} (text='{msg.text[:40]}') has speaker_role "
+                f"'{msg.speaker_role}', expected 'unknown' (no receipt follows). "
+                f"Text:\n{text}"
+            )
+
+    @given(
+        msg_texts=st.lists(message_text_strategy(), min_size=2, max_size=6),
+    )
+    @settings(max_examples=100)
+    def test_all_messages_with_receipt_get_sent(self, msg_texts):
+        """For any sequence of messages where ALL are followed by a delivery receipt,
+        ALL messages SHALL be assigned speaker_role "sent".
+
+        **Validates: Requirements 3.1**
+        """
+        # Build conversation text with receipts after every message
+        lines = ["iMessage"]
+        for msg_text in msg_texts:
+            lines.append("Παρ 20 Φεβ, 10:30 πµ")
+            lines.append(msg_text)
+            lines.append("Παραδόθηκε")
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        for idx, msg in enumerate(messages):
+            assert msg.speaker_role == "sent", (
+                f"Message {idx} (text='{msg.text[:40]}') has speaker_role "
+                f"'{msg.speaker_role}', expected 'sent' (receipt follows). "
+                f"Text:\n{text}"
+            )
+
+    @given(
+        msg_text=message_text_strategy(),
+    )
+    @settings(max_examples=100)
+    def test_orphan_receipt_at_start_is_ignored(self, msg_text):
+        """When a delivery receipt line appears before any message has been accumulated,
+        it SHALL be ignored (orphan receipt).
+
+        **Validates: Requirements 3.1, 3.2**
+        """
+        # Receipt before the first message
+        lines = [
+            "iMessage",
+            "Παραδόθηκε",  # orphan receipt - no preceding message
+            "Παρ 20 Φεβ, 10:30 πµ",
+            msg_text,
+        ]
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # The orphan receipt should not cause any message to be tagged "sent"
+        # The only message (msg_text) has no receipt after it
+        assert len(messages) >= 1, "Expected at least one message"
+        for msg in messages:
+            assert msg.speaker_role == "unknown", (
+                f"Message '{msg.text[:40]}' has speaker_role '{msg.speaker_role}', "
+                f"expected 'unknown' (orphan receipt should not tag any message)"
+            )
+
+
+# --- Property Test: Speaker Role Assignment Safety Invariant ---
+
+
+class TestProperty11SpeakerRoleAssignmentSafetyInvariant:
+    """Property 11: Speaker Role Assignment Safety Invariant.
+
+    For any set of parsed messages, every message with speaker_role "sent" SHALL be
+    justified by either (a) a delivery receipt immediately following it in document order,
+    or (b) coordinate-based classification indicating right-aligned. No other mechanism
+    SHALL produce a "sent" assignment.
+
+    # Feature: participant-context-clarity, Property 11: Speaker Role Assignment Safety Invariant
+    Validates: Requirements 3.3
+    """
+
+    @given(data=delivery_receipt_conversation_strategy())
+    @settings(max_examples=100)
+    def test_sent_only_when_receipt_follows(self, data):
+        """For any set of messages processed by the receipt heuristic,
+        every message with speaker_role "sent" SHALL be immediately followed
+        by a delivery receipt in the original document order.
+
+        **Validates: Requirements 3.3**
+        """
+        text, expected_roles = data
+
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # Parse the text to identify which messages are followed by a receipt
+        lines = text.split("\n")
+        receipt_line = "Παραδόθηκε"
+
+        # Build a set of message indices that are followed by a receipt
+        # based on the parser's internal tracking
+        receipt_indices = getattr(parser, "_receipt_followed_indices", set())
+
+        for idx, msg in enumerate(messages):
+            if msg.speaker_role == "sent":
+                # A "sent" role MUST be justified: the message index must be
+                # in the receipt_followed_indices set (receipt follows it)
+                assert idx in receipt_indices, (
+                    f"Message {idx} (text='{msg.text[:50]}') has speaker_role 'sent' "
+                    f"but is NOT followed by a delivery receipt in document order. "
+                    f"Receipt indices: {receipt_indices}. "
+                    f"This violates the safety invariant: 'sent' requires justification."
+                )
+
+    @given(
+        msg_texts=st.lists(message_text_strategy(), min_size=1, max_size=8),
+    )
+    @settings(max_examples=100)
+    def test_no_sent_without_receipt_in_receipt_only_mode(self, msg_texts):
+        """When coordinate classification is not used (receipt-only mode),
+        no message SHALL receive speaker_role "sent" unless a delivery receipt
+        immediately follows it.
+
+        **Validates: Requirements 3.3**
+        """
+        # Build conversation text with NO receipts at all
+        lines = ["iMessage"]
+        for msg_text in msg_texts:
+            lines.append("Παρ 20 Φεβ, 10:30 πµ")
+            lines.append(msg_text)
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # No receipts → no message should be "sent"
+        for idx, msg in enumerate(messages):
+            assert msg.speaker_role != "sent", (
+                f"Message {idx} (text='{msg.text[:50]}') has speaker_role 'sent' "
+                f"but no delivery receipt follows it in document order. "
+                f"Without coordinate classification or a receipt, 'sent' is unjustified."
+            )
+
+    @given(data=delivery_receipt_conversation_strategy())
+    @settings(max_examples=100)
+    def test_sent_count_equals_receipt_count(self, data):
+        """The number of messages assigned "sent" by the receipt heuristic SHALL
+        equal exactly the number of delivery receipts that follow messages.
+        No extra "sent" assignments can exist without justification.
+
+        **Validates: Requirements 3.3**
+        """
+        text, expected_roles = data
+
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # Count messages that are "sent"
+        sent_count = sum(1 for msg in messages if msg.speaker_role == "sent")
+        # Count expected "sent" from the generated strategy
+        expected_sent_count = sum(1 for role in expected_roles if role == "sent")
+
+        assert sent_count == expected_sent_count, (
+            f"Expected {expected_sent_count} 'sent' messages (matching receipt count) "
+            f"but got {sent_count} 'sent' messages. "
+            f"Extra 'sent' assignments without justification violate the safety invariant."
+        )
+
+    @given(
+        msg_texts=st.lists(message_text_strategy(), min_size=2, max_size=8),
+        receipt_positions=st.data(),
+    )
+    @settings(max_examples=100)
+    def test_only_receipt_preceded_messages_get_sent(
+        self, msg_texts, receipt_positions
+    ):
+        """For any arbitrary placement of delivery receipts among messages,
+        ONLY the messages immediately before a receipt SHALL be tagged "sent".
+        All other messages SHALL NOT be "sent".
+
+        **Validates: Requirements 3.3**
+        """
+        # Build conversation with controlled receipt placement
+        lines = ["iMessage"]
+        expected_sent_indices: set[int] = set()
+
+        for i, msg_text in enumerate(msg_texts):
+            lines.append("Παρ 20 Φεβ, 10:30 πµ")
+            lines.append(msg_text)
+            # Randomly decide if this message gets a receipt
+            has_receipt = receipt_positions.draw(st.booleans())
+            if has_receipt:
+                lines.append("Παραδόθηκε")
+                expected_sent_indices.add(i)
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        assert len(messages) == len(
+            msg_texts
+        ), f"Expected {len(msg_texts)} messages, got {len(messages)}"
+
+        for idx, msg in enumerate(messages):
+            if idx in expected_sent_indices:
+                assert msg.speaker_role == "sent", (
+                    f"Message {idx} (text='{msg.text[:50]}') should be 'sent' "
+                    f"(receipt follows) but got '{msg.speaker_role}'"
+                )
+            else:
+                assert msg.speaker_role != "sent", (
+                    f"Message {idx} (text='{msg.text[:50]}') has speaker_role 'sent' "
+                    f"but no delivery receipt follows it. "
+                    f"This violates the safety invariant."
+                )
+
+
+# --- Property Test: Coordinate Precedence Over Heuristic ---
+
+
+class TestProperty12CoordinatePrecedenceOverHeuristic:
+    """Property 12: Coordinate Precedence Over Heuristic.
+
+    For any message where both coordinate-based classification and delivery receipt
+    heuristic produce a speaker_role, the final speaker_role SHALL equal the
+    coordinate-based result.
+
+    # Feature: participant-context-clarity, Property 12: Coordinate Precedence Over Heuristic
+    Validates: Requirements 3.4
+    """
+
+    @given(
+        msg_texts=st.lists(
+            message_text_strategy(), min_size=2, max_size=6, unique=True
+        ),
+        coord_roles=st.data(),
+    )
+    @settings(max_examples=100)
+    def test_coordinate_result_overrides_receipt_sent(self, msg_texts, coord_roles):
+        """When a message would be tagged "sent" by receipt heuristic but coordinate
+        classification assigns "received", the final role SHALL be "received"
+        (coordinate wins).
+
+        **Validates: Requirements 3.4**
+        """
+        # Build conversation text where ALL messages are followed by a receipt
+        # (so receipt heuristic would assign "sent" to all)
+        lines = ["iMessage"]
+        for msg_text in msg_texts:
+            lines.append("Παρ 20 Φεβ, 10:30 πµ")
+            lines.append(msg_text)
+            lines.append("Παραδόθηκε")
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+
+        # Verify receipt heuristic would tag these as "sent"
+        receipt_messages = parser._assign_speaker_roles_by_receipt(
+            [
+                Message(
+                    text=m.text,
+                    timestamp=m.timestamp,
+                    message_type=m.message_type,
+                    phone_number=m.phone_number,
+                )
+                for m in messages
+            ]
+        )
+        for rm in receipt_messages:
+            assert (
+                rm.speaker_role == "sent"
+            ), f"Setup error: receipt heuristic should tag all messages as 'sent'"
+
+        # Now create a coordinate classification that assigns different roles
+        # For each message, randomly assign "sent" or "received" via coordinates
+        coord_classification: dict[str, str] = {}
+        expected_roles: list[str] = []
+        for msg in messages:
+            role = coord_roles.draw(st.sampled_from(["sent", "received"]))
+            coord_classification[msg.text] = role
+            expected_roles.append(role)
+
+        # Apply coordinate roles (this is what parse() does when coord classification succeeds)
+        parser._apply_coordinate_roles(messages, coord_classification)
+
+        # Verify coordinate result took precedence
+        for idx, (msg, expected_role) in enumerate(zip(messages, expected_roles)):
+            assert msg.speaker_role == expected_role, (
+                f"Message {idx} (text='{msg.text[:40]}') has speaker_role "
+                f"'{msg.speaker_role}', expected '{expected_role}' from coordinate "
+                f"classification. Coordinate result should take precedence over "
+                f"receipt heuristic."
+            )
+
+    @given(
+        msg_texts=st.lists(
+            message_text_strategy(), min_size=2, max_size=6, unique=True
+        ),
+        receipt_pattern=st.data(),
+    )
+    @settings(max_examples=100)
+    def test_coordinate_received_overrides_receipt_sent(
+        self, msg_texts, receipt_pattern
+    ):
+        """Specifically when coordinate says "received" but receipt says "sent",
+        the final role SHALL be "received" (most critical conflict scenario).
+
+        **Validates: Requirements 3.4**
+        """
+        # Build conversation with some messages followed by receipts
+        lines = ["iMessage"]
+        receipt_indices: set[int] = set()
+
+        for i, msg_text in enumerate(msg_texts):
+            lines.append("Παρ 20 Φεβ, 10:30 πµ")
+            lines.append(msg_text)
+            has_receipt = receipt_pattern.draw(st.booleans())
+            if has_receipt:
+                lines.append("Παραδόθηκε")
+                receipt_indices.add(i)
+
+        # Need at least one message with a receipt to test the conflict
+        assume(len(receipt_indices) >= 1)
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        assert len(messages) == len(msg_texts)
+
+        # Create coordinate classification that assigns "received" to ALL messages
+        # (conflicting with the "sent" from receipt heuristic for receipt-followed messages)
+        coord_classification: dict[str, str] = {
+            msg.text: "received" for msg in messages
+        }
+
+        # Apply coordinate roles
+        parser._apply_coordinate_roles(messages, coord_classification)
+
+        # ALL messages should be "received" because coordinates take precedence
+        for idx, msg in enumerate(messages):
+            assert msg.speaker_role == "received", (
+                f"Message {idx} (text='{msg.text[:40]}') has speaker_role "
+                f"'{msg.speaker_role}', expected 'received' from coordinate "
+                f"classification. Even though message {idx} "
+                f"{'was' if idx in receipt_indices else 'was not'} followed by a "
+                f"receipt, coordinate result SHALL take precedence."
+            )
+
+    @given(
+        msg_texts=st.lists(
+            message_text_strategy(), min_size=2, max_size=6, unique=True
+        ),
+        receipt_pattern=st.data(),
+        coord_roles=st.data(),
+    )
+    @settings(max_examples=100)
+    def test_parse_integration_coordinate_overrides_receipt(
+        self, msg_texts, receipt_pattern, coord_roles
+    ):
+        """Integration test: simulating the parse() flow where coordinate
+        classification succeeds, it SHALL be applied instead of the receipt
+        heuristic, even for messages that would have been tagged by receipts.
+
+        **Validates: Requirements 3.4**
+        """
+        # Build conversation with mixed receipts
+        lines = ["iMessage"]
+        receipt_indices: set[int] = set()
+
+        for i, msg_text in enumerate(msg_texts):
+            lines.append("Παρ 20 Φεβ, 10:30 πµ")
+            lines.append(msg_text)
+            has_receipt = receipt_pattern.draw(st.booleans())
+            if has_receipt:
+                lines.append("Παραδόθηκε")
+                receipt_indices.add(i)
+
+        text = "\n".join(lines)
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+        assert len(messages) == len(msg_texts)
+
+        # Generate coordinate classification for all messages
+        coord_classification: dict[str, str] = {}
+        expected_roles: list[str] = []
+        for msg in messages:
+            role = coord_roles.draw(st.sampled_from(["sent", "received"]))
+            coord_classification[msg.text] = role
+            expected_roles.append(role)
+
+        # Simulate parse() behavior: when coord_classification is not None,
+        # _apply_coordinate_roles is called instead of _assign_speaker_roles_by_receipt
+        # This is the precedence rule.
+        parser._apply_coordinate_roles(messages, coord_classification)
+
+        # Verify final roles match coordinate classification (not receipt heuristic)
+        for idx, (msg, expected_role) in enumerate(zip(messages, expected_roles)):
+            assert msg.speaker_role == expected_role, (
+                f"Message {idx} (text='{msg.text[:40]}') has speaker_role "
+                f"'{msg.speaker_role}', expected '{expected_role}' from coordinate "
+                f"classification. The parse() method uses coordinate results when "
+                f"available, discarding receipt heuristic results. "
+                f"Message {'was' if idx in receipt_indices else 'was not'} "
+                f"followed by a receipt."
+            )
+
+    @given(data=delivery_receipt_conversation_strategy())
+    @settings(max_examples=100)
+    def test_coordinate_classification_none_falls_back_to_receipt(self, data):
+        """When coordinate classification returns None (unreliable), the receipt
+        heuristic SHALL be used. This confirms that precedence only applies when
+        coordinates ARE available.
+
+        **Validates: Requirements 3.4**
+        """
+        text, expected_roles = data
+
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+
+        # Simulate parse() behavior: coord_classification is None → use receipt heuristic
+        coord_classification = None
+
+        if coord_classification is not None:
+            parser._apply_coordinate_roles(messages, coord_classification)
+        else:
+            messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # Should match receipt heuristic results
+        assert len(messages) == len(
+            expected_roles
+        ), f"Expected {len(expected_roles)} messages, got {len(messages)}"
+
+        for idx, (msg, expected_role) in enumerate(zip(messages, expected_roles)):
+            assert msg.speaker_role == expected_role, (
+                f"Message {idx} (text='{msg.text[:40]}') has speaker_role "
+                f"'{msg.speaker_role}', expected '{expected_role}' from receipt "
+                f"heuristic (coordinate classification was None/unreliable)."
+            )

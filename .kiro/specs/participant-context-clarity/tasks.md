@@ -57,7 +57,7 @@ This implementation improves RAG context presentation through two complementary 
     - Generate block sets where ≥80% are classifiable and assert coordinate roles are returned
     - Place test in `tests/test_property_pdf_parser.py`
 
-- [ ] 3. Implement delivery receipt heuristic in PDF Parser
+- [x] 3. Implement delivery receipt heuristic in PDF Parser
   - [x] 3.1 Implement `_assign_speaker_roles_by_receipt` method
     - Iterate messages in document order; when a delivery receipt ("Παραδόθηκε") is detected after a message, tag that message as "sent"
     - Messages without a following receipt and without coordinate classification get "unknown"
@@ -72,20 +72,20 @@ This implementation improves RAG context presentation through two complementary 
     - Ensure every Message object gets exactly one of "sent", "received", or "unknown"
     - _Requirements: 3.4, 3.6, 2.3_
 
-  - [ ] 3.3 Write property test for Delivery Receipt Tagging
+  - [x] 3.3 Write property test for Delivery Receipt Tagging
     - **Property 10: Delivery Receipt Tagging**
     - **Validates: Requirements 3.1, 3.2**
     - Generate message sequences with delivery receipts in various positions
     - Assert messages followed by receipt get "sent", others get "unknown"
     - Place test in `tests/test_property_pdf_parser.py`
 
-  - [ ] 3.4 Write property test for Speaker Role Assignment Safety Invariant
+  - [x] 3.4 Write property test for Speaker Role Assignment Safety Invariant
     - **Property 11: Speaker Role Assignment Safety Invariant**
     - **Validates: Requirements 3.3**
     - For any set of messages, assert that "sent" is only assigned when justified by receipt or coordinate classification
     - Place test in `tests/test_property_pdf_parser.py`
 
-  - [ ] 3.5 Write property test for Coordinate Precedence Over Heuristic
+  - [x] 3.5 Write property test for Coordinate Precedence Over Heuristic
     - **Property 12: Coordinate Precedence Over Heuristic**
     - **Validates: Requirements 3.4**
     - Generate messages where both methods produce roles; assert coordinate result wins
