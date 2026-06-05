@@ -3,8 +3,9 @@
 # Feature: sms-rag, Property 1: Message Chronological Order Preservation
 # Feature: sms-rag, Property 2: Metadata Extraction Completeness
 # Feature: sms-rag, Property 3: Filename to Participant Name Derivation
+# Feature: participant-context-clarity, Property 13: Speaker Role Domain Invariant
 
-Validates: Requirements 1.1, 1.2, 1.4
+Validates: Requirements 1.1, 1.2, 1.4, 3.6, 4.1, 4.2
 """
 
 import string
@@ -15,6 +16,7 @@ from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
 from sms_rag.preprocessing.pdf_parser import PDFParser
+from sms_rag.shared.models import Message
 
 
 # --- Greek constants used by the parser ---
@@ -475,3 +477,89 @@ class TestProperty3FilenameDerviation:
         assert (
             participant_name == name_part
         ), f"Unicode not preserved: expected '{name_part}', got '{participant_name}'"
+
+
+# --- Speaker Role Generator ---
+
+VALID_SPEAKER_ROLES = ["sent", "received", "unknown"]
+
+
+@st.composite
+def message_with_role_generator(draw):
+    """Generate Message objects with arbitrary text and speaker_role values.
+
+    Produces Message objects with:
+    - Arbitrary text content (including unicode, embedded newlines, edge cases)
+    - speaker_role drawn from the valid domain: {"sent", "received", "unknown"}
+    """
+    text = draw(
+        st.text(
+            min_size=1,
+            max_size=200,
+        )
+    )
+    assume(text.strip() != "")
+    role = draw(st.sampled_from(VALID_SPEAKER_ROLES))
+    return Message(text=text, speaker_role=role)
+
+
+# --- Property Test: Speaker Role Domain Invariant ---
+
+
+class TestProperty13SpeakerRoleDomainInvariant:
+    """Property 13: Speaker Role Domain Invariant.
+
+    For any Message object produced by the PDF_Parser, the speaker_role field
+    SHALL contain exactly one of the values "sent", "received", or "unknown".
+
+    # Feature: participant-context-clarity, Property 13: Speaker Role Domain Invariant
+    Validates: Requirements 3.6, 4.1, 4.2
+    """
+
+    @given(message=message_with_role_generator())
+    @settings(max_examples=100)
+    def test_speaker_role_always_in_valid_domain(self, message):
+        """For any Message object, the speaker_role field SHALL contain exactly
+        one of: "sent", "received", or "unknown".
+
+        **Validates: Requirements 3.6, 4.1, 4.2**
+        """
+        assert message.speaker_role in {"sent", "received", "unknown"}, (
+            f"speaker_role '{message.speaker_role}' is not in the allowed domain "
+            f'{{"sent", "received", "unknown"}}'
+        )
+
+    @given(data=conversation_text_strategy())
+    @settings(max_examples=100)
+    def test_parser_produced_messages_have_valid_speaker_role(self, data):
+        """For any messages produced by the PDF parser's _extract_messages method,
+        every Message SHALL have speaker_role in {"sent", "received", "unknown"}.
+
+        **Validates: Requirements 3.6, 4.1, 4.2**
+        """
+        text, _ = data
+        parser = PDFParser()
+        messages = parser._extract_messages(text)
+
+        for msg in messages:
+            assert msg.speaker_role in {"sent", "received", "unknown"}, (
+                f"Parser produced message with speaker_role '{msg.speaker_role}' "
+                f"which is not in the allowed domain "
+                f'{{"sent", "received", "unknown"}}'
+            )
+
+    @given(
+        text=st.text(min_size=1, max_size=200),
+    )
+    @settings(max_examples=100)
+    def test_default_speaker_role_is_unknown(self, text):
+        """When a Message is created without specifying speaker_role,
+        it SHALL default to "unknown".
+
+        **Validates: Requirements 4.2**
+        """
+        assume(text.strip() != "")
+        msg = Message(text=text)
+        assert (
+            msg.speaker_role == "unknown"
+        ), f"Default speaker_role should be 'unknown', got '{msg.speaker_role}'"

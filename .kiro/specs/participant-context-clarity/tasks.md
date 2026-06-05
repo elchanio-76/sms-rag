@@ -6,14 +6,14 @@ This implementation improves RAG context presentation through two complementary 
 
 ## Tasks
 
-- [ ] 1. Extend Message model and add TextBlock dataclass
+- [x] 1. Extend Message model and add TextBlock dataclass
   - [x] 1.1 Add `speaker_role` field to Message dataclass and create TextBlock dataclass
     - Add `speaker_role: str = "unknown"` field to the existing `Message` dataclass in `sms_rag/shared/models.py`
     - Create a new `TextBlock` dataclass with fields: `text: str`, `x_position: float`, `page_number: int`
     - Ensure allowed values for `speaker_role` are documented as "sent", "received", or "unknown"
     - _Requirements: 4.1, 4.2_
 
-  - [ ] 1.2 Write property test for Speaker Role Domain Invariant
+  - [x] 1.2 Write property test for Speaker Role Domain Invariant
     - **Property 13: Speaker Role Domain Invariant**
     - **Validates: Requirements 3.6, 4.1, 4.2**
     - Create a generator `message_with_role_generator` that produces Message objects with arbitrary text and speaker_role values
