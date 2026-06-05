@@ -139,6 +139,7 @@ class PDFParser:
         """
         self._x_threshold_ratio = x_threshold_ratio
         self._ambiguity_margin = ambiguity_margin
+        self._receipt_followed_indices: set[int] = set()
 
     def _extract_text_blocks_with_coords(self, page: pymupdf.Page) -> list[TextBlock]:
         """Extract text blocks with x-coordinate positions from a page.
@@ -327,9 +328,14 @@ class PDFParser:
         Detects message boundaries using date/time stamp patterns and
         message type indicators. Groups text between boundaries into
         individual messages.
+
+        Also populates self._receipt_followed_indices with the set of
+        message indices that were immediately followed by a delivery receipt
+        in document order (used by _assign_speaker_roles_by_receipt).
         """
         lines = text.split("\n")
         messages: list[Message] = []
+        self._receipt_followed_indices: set[int] = set()
 
         current_message_type: str | None = None
         current_timestamp: datetime | None = None
@@ -415,7 +421,7 @@ class PDFParser:
                     continue
                 # If the phone is embedded in text, continue to add the line as content
 
-            # Delivery receipt acts as a boundary - save current message and start new
+            # Delivery receipt acts as a boundary - save current message and mark it
             if _DELIVERY_RECEIPT_PATTERN.match(line):
                 if in_message and current_text_lines:
                     messages.append(
@@ -426,10 +432,13 @@ class PDFParser:
                             phone_number=current_phone,
                         )
                     )
+                    # Track that this message was followed by a delivery receipt
+                    self._receipt_followed_indices.add(len(messages) - 1)
                     current_text_lines = []
                     # Keep current context (type, timestamp) for the response
                     # but mark that we're ready for new text
                     in_message = True
+                # If no message was accumulated (orphan receipt), ignore it (Req 3.5)
                 i += 1
                 continue
 
@@ -468,5 +477,44 @@ class PDFParser:
 
         # Filter out empty messages
         messages = [m for m in messages if m.text.strip()]
+
+        return messages
+
+    def _assign_speaker_roles_by_receipt(
+        self, messages: list[Message]
+    ) -> list[Message]:
+        """Fallback: assign speaker roles using delivery receipt heuristic.
+
+        Uses the receipt tracking information populated by _extract_messages
+        (self._receipt_followed_indices) to determine which messages were sent.
+
+        Rules:
+        - Messages immediately followed by a delivery receipt ("Παραδόθηκε")
+          in document order are tagged as "sent" (Req 3.1).
+        - Messages not followed by a receipt and without coordinate-based
+          classification get "unknown" (Req 3.2).
+        - A "sent" assignment is never made unless justified by a receipt
+          or coordinate classification (Req 3.3).
+        - Orphan receipts (no preceding message) are already ignored during
+          extraction (Req 3.5).
+
+        Args:
+            messages: List of Message objects in document order, as produced
+                by _extract_messages.
+
+        Returns:
+            The same list of messages with speaker_role assigned.
+        """
+        receipt_indices = getattr(self, "_receipt_followed_indices", set())
+
+        for idx, message in enumerate(messages):
+            if idx in receipt_indices:
+                message.speaker_role = "sent"
+            else:
+                # Only assign "unknown" if no coordinate-based role was already set.
+                # If coordinate classification previously set a role, preserve it.
+                # (In pure receipt-heuristic mode, all non-receipt messages get "unknown".)
+                if message.speaker_role == "unknown":
+                    message.speaker_role = "unknown"
 
         return messages

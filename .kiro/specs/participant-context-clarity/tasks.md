@@ -35,7 +35,7 @@ This implementation improves RAG context presentation through two complementary 
     - If ≥80% classifiable → return dict mapping text → speaker_role
     - _Requirements: 2.2, 2.3, 2.4, 2.5_
 
-  - [ ] 2.3 Write property test for Coordinate Classification Correctness
+  - [-] 2.3 Write property test for Coordinate Classification Correctness
     - **Property 7: Coordinate Classification Correctness**
     - **Validates: Requirements 2.2, 2.4**
     - Use `text_block_generator(page_width, threshold_ratio, ambiguity_margin)` to generate TextBlock lists
@@ -58,7 +58,7 @@ This implementation improves RAG context presentation through two complementary 
     - Place test in `tests/test_property_pdf_parser.py`
 
 - [ ] 3. Implement delivery receipt heuristic in PDF Parser
-  - [ ] 3.1 Implement `_assign_speaker_roles_by_receipt` method
+  - [x] 3.1 Implement `_assign_speaker_roles_by_receipt` method
     - Iterate messages in document order; when a delivery receipt ("Παραδόθηκε") is detected after a message, tag that message as "sent"
     - Messages without a following receipt and without coordinate classification get "unknown"
     - Orphan receipts (no preceding message) are ignored

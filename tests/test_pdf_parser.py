@@ -546,6 +546,141 @@ class TestSkipLines:
         )
 
 
+class TestAssignSpeakerRolesByReceipt:
+    """Test the _assign_speaker_roles_by_receipt method."""
+
+    @pytest.fixture
+    def parser(self):
+        return PDFParser()
+
+    def test_message_followed_by_receipt_gets_sent(self, parser):
+        """A message immediately followed by a delivery receipt is tagged 'sent'."""
+        text = (
+            "iMessage\n"
+            "Παρ 20 Φεβ, 10:30 πµ\n"
+            "Hello there\n"
+            "Παραδόθηκε\n"
+            "Δευ 9 Μαρ, 12:34 µµ\n"
+            "Reply message"
+        )
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        assert len(messages) == 2
+        assert messages[0].speaker_role == "sent"
+        assert messages[1].speaker_role == "unknown"
+
+    def test_message_without_receipt_gets_unknown(self, parser):
+        """Messages not followed by a receipt get 'unknown'."""
+        text = (
+            "iMessage\n"
+            "Παρ 20 Φεβ, 10:30 πµ\n"
+            "First message\n"
+            "Δευ 9 Μαρ, 12:34 µµ\n"
+            "Second message"
+        )
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        assert len(messages) == 2
+        assert messages[0].speaker_role == "unknown"
+        assert messages[1].speaker_role == "unknown"
+
+    def test_orphan_receipt_is_ignored(self, parser):
+        """A receipt with no preceding message is ignored (Req 3.5)."""
+        text = "iMessage\n" "Παραδόθηκε\n" "Παρ 20 Φεβ, 10:30 πµ\n" "Hello"
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # Only one message should exist, and it shouldn't be tagged "sent"
+        # because the receipt was orphaned (no preceding accumulated message)
+        assert len(messages) == 1
+        assert messages[0].text == "Hello"
+        assert messages[0].speaker_role == "unknown"
+
+    def test_multiple_receipts_tag_correct_messages(self, parser):
+        """Multiple receipts correctly tag their preceding messages."""
+        text = (
+            "iMessage\n"
+            "Παρ 20 Φεβ, 10:30 πµ\n"
+            "Sent message 1\n"
+            "Παραδόθηκε\n"
+            "Δευ 9 Μαρ, 12:34 µµ\n"
+            "Received message\n"
+            "Τρί 21 Απρ, 4:06 µµ\n"
+            "Sent message 2\n"
+            "Παραδόθηκε"
+        )
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        assert len(messages) == 3
+        assert messages[0].speaker_role == "sent"
+        assert messages[1].speaker_role == "unknown"
+        assert messages[2].speaker_role == "sent"
+
+    def test_consecutive_receipts_only_tag_last_message(self, parser):
+        """Each receipt tags only the message immediately before it."""
+        text = (
+            "iMessage\n"
+            "Παρ 20 Φεβ, 10:30 πµ\n"
+            "First sent\n"
+            "Παραδόθηκε\n"
+            "Δευ 9 Μαρ, 12:34 µµ\n"
+            "Second sent\n"
+            "Παραδόθηκε"
+        )
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        assert len(messages) == 2
+        assert messages[0].speaker_role == "sent"
+        assert messages[1].speaker_role == "sent"
+
+    def test_preserves_existing_non_unknown_roles(self, parser):
+        """If a message already has a non-unknown role (from coordinates),
+        the receipt heuristic preserves it."""
+        text = (
+            "iMessage\n"
+            "Παρ 20 Φεβ, 10:30 πµ\n"
+            "A message\n"
+            "Δευ 9 Μαρ, 12:34 µµ\n"
+            "Another message"
+        )
+        messages = parser._extract_messages(text)
+        # Simulate coordinate classification already setting a role
+        messages[0].speaker_role = "received"
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # The "received" role should be preserved (not overwritten to "unknown")
+        assert messages[0].speaker_role == "received"
+        assert messages[1].speaker_role == "unknown"
+
+    def test_empty_message_list(self, parser):
+        """Empty message list is handled gracefully."""
+        parser._extract_messages("")  # Initialize _receipt_followed_indices
+        result = parser._assign_speaker_roles_by_receipt([])
+        assert result == []
+
+    def test_sent_never_assigned_without_receipt(self, parser):
+        """Speaker role 'sent' is never assigned without a receipt (Req 3.3)."""
+        text = (
+            "iMessage\n"
+            "Παρ 20 Φεβ, 10:30 πµ\n"
+            "Message one\n"
+            "Δευ 9 Μαρ, 12:34 µµ\n"
+            "Message two\n"
+            "Τρί 21 Απρ, 4:06 µµ\n"
+            "Message three"
+        )
+        messages = parser._extract_messages(text)
+        messages = parser._assign_speaker_roles_by_receipt(messages)
+
+        # None should be "sent" since there are no receipts
+        for msg in messages:
+            assert msg.speaker_role != "sent"
+
+
 class TestRealPDFs:
     """Integration tests using actual PDF files in data/."""
 
