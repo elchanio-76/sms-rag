@@ -91,36 +91,36 @@ This implementation improves RAG context presentation through two complementary 
     - Generate messages where both methods produce roles; assert coordinate result wins
     - Place test in `tests/test_property_pdf_parser.py`
 
-- [ ] 4. Checkpoint - Ensure all parser tests pass
+- [x] 4. Checkpoint - Ensure all parser tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Update Chunker with speaker role prefixing
-  - [ ] 5.1 Implement `_format_message_line` static method in ConversationChunker
+- [x] 5. Update Chunker with speaker role prefixing
+  - [x] 5.1 Implement `_format_message_line` static method in ConversationChunker
     - Add `_format_message_line(message: Message, participant_name: str) -> str` method
     - Return `[You]: {text}` for "sent", `[{participant_name}]: {text}` for "received", `[Message]: {text}` for "unknown"
     - _Requirements: 4.3, 4.4, 5.1, 5.2, 5.3_
 
-  - [ ] 5.2 Update `_build_chunk` to use speaker role prefixes
+  - [x] 5.2 Update `_build_chunk` to use speaker role prefixes
     - Replace `text = "\n".join(msg.text for msg in messages)` with `text = "\n".join(self._format_message_line(msg, participant_name) for msg in messages)`
     - Ensure messages are separated by single newline characters
     - Preserve internal newlines within message text
     - _Requirements: 5.4, 5.5_
 
-  - [ ] 5.3 Write property test for Speaker Role Prefix Correctness
+  - [x] 5.3 Write property test for Speaker Role Prefix Correctness
     - **Property 15: Speaker Role Prefix Correctness**
     - **Validates: Requirements 4.3, 4.4, 5.1, 5.2, 5.3**
     - Generate messages with various roles and participant names
     - Assert each line starts with the correct prefix based on speaker_role
     - Place test in `tests/test_property_chunker.py`
 
-  - [ ] 5.4 Write property test for Speaker Role Prefix Round-Trip
+  - [x] 5.4 Write property test for Speaker Role Prefix Round-Trip
     - **Property 14: Speaker Role Prefix Round-Trip**
     - **Validates: Requirements 5.4, 5.5, 5.6**
     - Generate messages, chunk them, split chunk text on `\n(?=\[(?:You|Message|[^\]]+)\]: )`, strip prefixes
     - Assert recovered texts match original message texts exactly
     - Place test in `tests/test_property_chunker.py`
 
-  - [ ] 5.5 Write property test for Full-Unknown Graceful Degradation
+  - [x] 5.5 Write property test for Full-Unknown Graceful Degradation
     - **Property 17: Full-Unknown Graceful Degradation**
     - **Validates: Requirements 6.3, 6.4**
     - Generate ParsedConversation where all messages have "unknown" role

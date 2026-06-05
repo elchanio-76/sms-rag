@@ -154,7 +154,7 @@ class TestConversationChunkerChunk:
             messages=messages,
         )
         result = chunker.chunk(conv)
-        assert result[0].text == "Hello\nWorld\nFoo"
+        assert result[0].text == "[Message]: Hello\n[Message]: World\n[Message]: Foo"
 
     def test_metadata_aggregation_participant_and_filename(self):
         chunker = ConversationChunker(chunk_size=10, overlap=2)
@@ -249,12 +249,12 @@ class TestConversationChunkerChunk:
         conv = self._make_conversation(13)
         result = chunker.chunk(conv)
 
-        # Collect all message texts from all chunks
+        # Collect all message texts from all chunks (strip speaker prefix)
         all_texts_in_chunks: set[str] = set()
         for chunk in result:
             for line in chunk.text.split("\n"):
                 all_texts_in_chunks.add(line)
 
-        # All original messages should be present
+        # All original messages should be present (with prefix)
         for msg in conv.messages:
-            assert msg.text in all_texts_in_chunks
+            assert f"[Message]: {msg.text}" in all_texts_in_chunks

@@ -87,7 +87,9 @@ class ConversationChunker:
         source_filename: str,
     ) -> ConversationChunk:
         """Build a ConversationChunk from a list of messages with aggregated metadata."""
-        text = "\n".join(msg.text for msg in messages)
+        text = "\n".join(
+            self._format_message_line(msg, participant_name) for msg in messages
+        )
 
         # Aggregate timestamps for date range
         timestamps = [msg.timestamp for msg in messages if msg.timestamp is not None]
@@ -115,6 +117,22 @@ class ConversationChunker:
             phone_numbers=phone_numbers,
             message_count=len(messages),
         )
+
+    @staticmethod
+    def _format_message_line(message: Message, participant_name: str) -> str:
+        """Format a single message with speaker role prefix.
+
+        Returns:
+            "[You]: {text}" for sent messages
+            "[{participant_name}]: {text}" for received messages
+            "[Message]: {text}" for unknown messages
+        """
+        if message.speaker_role == "sent":
+            return f"[You]: {message.text}"
+        elif message.speaker_role == "received":
+            return f"[{participant_name}]: {message.text}"
+        else:
+            return f"[Message]: {message.text}"
 
     @staticmethod
     def _hash_filename(filename: str) -> str:
