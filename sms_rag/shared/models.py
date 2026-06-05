@@ -13,6 +13,16 @@ class Message:
     timestamp: datetime | None = None
     message_type: str | None = None  # "SMS", "iMessage", "RCS", or None
     phone_number: str | None = None
+    speaker_role: str = "unknown"  # "sent", "received", or "unknown"
+
+
+@dataclass
+class TextBlock:
+    """A text block extracted from a PDF page with spatial information."""
+
+    text: str
+    x_position: float  # X-coordinate in points from left edge
+    page_number: int
 
 
 @dataclass

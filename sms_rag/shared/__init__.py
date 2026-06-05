@@ -10,6 +10,7 @@ from sms_rag.shared.models import (
     PipelineSummary,
     SearchResult,
     SessionExchange,
+    TextBlock,
 )
 from sms_rag.shared.vector_store import VectorStoreInterface
 
@@ -23,5 +24,6 @@ __all__ = [
     "PipelineSummary",
     "SearchResult",
     "SessionExchange",
+    "TextBlock",
     "VectorStoreInterface",
 ]
