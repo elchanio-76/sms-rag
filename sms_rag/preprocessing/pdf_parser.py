@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pymupdf
 
-from sms_rag.shared.models import Message, ParsedConversation
+from sms_rag.shared.models import Message, ParsedConversation, TextBlock
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,67 @@ def _is_skip_line(line: str) -> bool:
 
 class PDFParser:
     """Parses conversation PDFs into structured Message objects."""
+
+    def __init__(
+        self, x_threshold_ratio: float = 0.5, ambiguity_margin: float = 10.0
+    ) -> None:
+        """Initialize PDFParser with coordinate classification parameters.
+
+        Args:
+            x_threshold_ratio: Ratio of page width to use as left/right threshold.
+                Default 0.5 (50% of page width).
+            ambiguity_margin: Points within which a block is considered ambiguous.
+                Default 10.0 points.
+        """
+        self._x_threshold_ratio = x_threshold_ratio
+        self._ambiguity_margin = ambiguity_margin
+
+    def _extract_text_blocks_with_coords(self, page: pymupdf.Page) -> list[TextBlock]:
+        """Extract text blocks with x-coordinate positions from a page.
+
+        Uses page.get_text("dict") to retrieve block-level spatial information.
+        Each block's left edge (x0) is captured as the x_position.
+
+        Args:
+            page: A PyMuPDF Page object.
+
+        Returns:
+            List of TextBlock objects with text content, x0 coordinate, and page number.
+        """
+        page_dict = page.get_text("dict")
+        page_number = page.number
+        text_blocks: list[TextBlock] = []
+
+        for block in page_dict.get("blocks", []):
+            # Only process text blocks (type 0), skip image blocks (type 1)
+            if block.get("type") != 0:
+                continue
+
+            # Extract text from all lines and spans within the block
+            block_text_parts: list[str] = []
+            for line in block.get("lines", []):
+                line_text = "".join(
+                    span.get("text", "") for span in line.get("spans", [])
+                )
+                if line_text.strip():
+                    block_text_parts.append(line_text.strip())
+
+            block_text = "\n".join(block_text_parts)
+            if not block_text.strip():
+                continue
+
+            # x0 is the left edge of the block's bounding box
+            x0 = block["bbox"][0]
+
+            text_blocks.append(
+                TextBlock(
+                    text=block_text,
+                    x_position=x0,
+                    page_number=page_number,
+                )
+            )
+
+        return text_blocks
 
     def parse(self, pdf_path: Path) -> ParsedConversation:
         """Parse a single PDF file into structured messages.

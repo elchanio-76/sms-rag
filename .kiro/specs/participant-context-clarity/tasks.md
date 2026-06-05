@@ -21,7 +21,7 @@ This implementation improves RAG context presentation through two complementary 
     - Place test in `tests/test_property_pdf_parser.py`
 
 - [ ] 2. Implement coordinate-based speaker detection in PDF Parser
-  - [ ] 2.1 Add constructor parameters and `_extract_text_blocks_with_coords` method
+  - [x] 2.1 Add constructor parameters and `_extract_text_blocks_with_coords` method
     - Add `x_threshold_ratio: float = 0.5` and `ambiguity_margin: float = 10.0` to `PDFParser.__init__`
     - Implement `_extract_text_blocks_with_coords(self, page: pymupdf.Page) -> list[TextBlock]` using `page.get_text("dict")` to extract block-level x-coordinates
     - Each TextBlock captures the text content, the x0 coordinate (left edge), and page number
