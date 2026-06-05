@@ -20,7 +20,7 @@ This implementation improves RAG context presentation through two complementary 
     - Assert that every Message produced by the parser has speaker_role in {"sent", "received", "unknown"}
     - Place test in `tests/test_property_pdf_parser.py`
 
-- [ ] 2. Implement coordinate-based speaker detection in PDF Parser
+- [x] 2. Implement coordinate-based speaker detection in PDF Parser
   - [x] 2.1 Add constructor parameters and `_extract_text_blocks_with_coords` method
     - Add `x_threshold_ratio: float = 0.5` and `ambiguity_margin: float = 10.0` to `PDFParser.__init__`
     - Implement `_extract_text_blocks_with_coords(self, page: pymupdf.Page) -> list[TextBlock]` using `page.get_text("dict")` to extract block-level x-coordinates
@@ -35,21 +35,21 @@ This implementation improves RAG context presentation through two complementary 
     - If ≥80% classifiable → return dict mapping text → speaker_role
     - _Requirements: 2.2, 2.3, 2.4, 2.5_
 
-  - [-] 2.3 Write property test for Coordinate Classification Correctness
+  - [x] 2.3 Write property test for Coordinate Classification Correctness
     - **Property 7: Coordinate Classification Correctness**
     - **Validates: Requirements 2.2, 2.4**
     - Use `text_block_generator(page_width, threshold_ratio, ambiguity_margin)` to generate TextBlock lists
     - Assert that non-ambiguous blocks below threshold get "received" and at/above threshold get "sent"
     - Place test in `tests/test_property_pdf_parser.py`
 
-  - [ ] 2.4 Write property test for Ambiguity Exclusion
+  - [x] 2.4 Write property test for Ambiguity Exclusion
     - **Property 8: Ambiguity Exclusion**
     - **Validates: Requirements 2.5**
     - Generate text blocks with x-coordinates within `ambiguity_margin` of the threshold
     - Assert these blocks are excluded from the reliability percentage and don't receive coordinate-based roles
     - Place test in `tests/test_property_pdf_parser.py`
 
-  - [ ] 2.5 Write property test for Coordinate Reliability Threshold
+  - [x] 2.5 Write property test for Coordinate Reliability Threshold
     - **Property 9: Coordinate Reliability Threshold**
     - **Validates: Requirements 2.3**
     - Generate block sets where <80% of non-ambiguous blocks are classifiable
@@ -64,7 +64,7 @@ This implementation improves RAG context presentation through two complementary 
     - Orphan receipts (no preceding message) are ignored
     - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-  - [ ] 3.2 Integrate coordinate and receipt detection into `_extract_messages`
+  - [-] 3.2 Integrate coordinate and receipt detection into `_extract_messages`
     - Modify `parse()` to first attempt coordinate-based classification
     - If coordinate detection is reliable (≥80% threshold met), apply coordinate roles to all messages
     - If coordinate detection fails, apply delivery receipt heuristic as fallback
