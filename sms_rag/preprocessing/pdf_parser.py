@@ -187,6 +187,64 @@ class PDFParser:
 
         return text_blocks
 
+    def _classify_speaker_by_coordinates(
+        self, text_blocks: list[TextBlock], page_width: float
+    ) -> dict[str, str] | None:
+        """Classify text blocks as left/right aligned based on x-coordinate.
+
+        Returns a mapping of text -> speaker_role, or None if classification
+        is unreliable (<80% of non-ambiguous blocks classifiable).
+
+        Args:
+            text_blocks: List of TextBlock objects with x-coordinate positions.
+            page_width: Width of the PDF page in points.
+
+        Returns:
+            Dict mapping block text to "sent" or "received", or None if
+            classification is unreliable.
+        """
+        if not text_blocks:
+            return None
+
+        threshold = page_width * self._x_threshold_ratio
+
+        classified: dict[str, str] = {}
+        total_blocks = len(text_blocks)
+
+        for block in text_blocks:
+            distance_from_threshold = abs(block.x_position - threshold)
+
+            # Blocks within ambiguity margin are excluded from classification
+            if distance_from_threshold <= self._ambiguity_margin:
+                continue
+
+            if block.x_position < threshold:
+                classified[block.text] = "received"
+            else:  # x_position >= threshold (and outside ambiguity margin)
+                classified[block.text] = "sent"
+
+        # Check reliability: need at least 80% of non-ambiguous blocks
+        # relative to total blocks to consider classification reliable
+        non_ambiguous_count = len(classified)
+        if non_ambiguous_count == 0:
+            logger.warning(
+                "Coordinate classification: all blocks are ambiguous "
+                "(within %.1f points of threshold). Falling back to receipt heuristic.",
+                self._ambiguity_margin,
+            )
+            return None
+
+        classifiable_ratio = non_ambiguous_count / total_blocks
+        if classifiable_ratio < 0.8:
+            logger.warning(
+                "Coordinate classification unreliable: only %.1f%% of "
+                "blocks classifiable (threshold: 80%%). Falling back to receipt heuristic.",
+                classifiable_ratio * 100,
+            )
+            return None
+
+        return classified
+
     def parse(self, pdf_path: Path) -> ParsedConversation:
         """Parse a single PDF file into structured messages.
 

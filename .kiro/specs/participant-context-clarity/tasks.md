@@ -27,7 +27,7 @@ This implementation improves RAG context presentation through two complementary 
     - Each TextBlock captures the text content, the x0 coordinate (left edge), and page number
     - _Requirements: 2.1_
 
-  - [ ] 2.2 Implement `_classify_speaker_by_coordinates` method
+  - [x] 2.2 Implement `_classify_speaker_by_coordinates` method
     - Calculate threshold as `page_width * self._x_threshold_ratio`
     - For each text block, determine if within ambiguity margin (exclude from classification)
     - Classify non-ambiguous blocks: `x < threshold` → "received", `x >= threshold` → "sent"
