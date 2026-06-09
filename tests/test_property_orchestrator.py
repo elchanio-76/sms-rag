@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
-from sms_rag.query.orchestrator import RAGOrchestrator
+from sms_rag.query.orchestrator import RAGOrchestrator, _SYSTEM_TEMPLATE
 from sms_rag.shared.models import GenerationResult, SearchResult
 
 
@@ -1899,3 +1899,595 @@ class TestBackwardCompatibleChunkPresentation:
             f"Original: '{chunk.text}'\n"
             f"Extracted: '{extracted}'"
         )
+
+
+# --- Generators for Property 18 ---
+
+
+@st.composite
+def context_with_speaker_prefix_generator(draw):
+    """Generate formatted context strings containing at least one speaker prefix.
+
+    Produces SearchResult lists where at least one chunk has text containing
+    a speaker role prefix pattern ([You]: or [{Name}]:).
+    """
+    # Generate a participant name (non-empty, no brackets or colons)
+    participant_name = draw(
+        st.text(
+            alphabet=st.characters(
+                whitelist_categories=("L", "N", "Zs"),
+                blacklist_characters="[]:|\n",
+            ),
+            min_size=2,
+            max_size=20,
+        ).filter(lambda s: s.strip() and not s.isspace())
+    )
+
+    # Generate message text
+    message_text = draw(
+        st.text(
+            alphabet=st.characters(
+                whitelist_categories=("L", "N", "Zs", "P"),
+                blacklist_characters="\n",
+            ),
+            min_size=1,
+            max_size=100,
+        ).filter(lambda s: s.strip())
+    )
+
+    # Choose a prefix pattern type
+    prefix_type = draw(st.sampled_from(["you", "name"]))
+    if prefix_type == "you":
+        prefixed_line = f"[You]: {message_text}"
+    else:
+        prefixed_line = f"[{participant_name}]: {message_text}"
+
+    # Optionally add more lines (some with prefixes, some without)
+    extra_lines = draw(
+        st.lists(
+            st.text(
+                alphabet=st.characters(
+                    whitelist_categories=("L", "N", "Zs", "P"),
+                    blacklist_characters="\n",
+                ),
+                min_size=1,
+                max_size=50,
+            ).filter(lambda s: s.strip()),
+            min_size=0,
+            max_size=5,
+        )
+    )
+
+    # Build the chunk text with at least one prefixed line
+    all_lines = [prefixed_line] + [f"[Message]: {line}" for line in extra_lines]
+    chunk_text = "\n".join(all_lines)
+
+    # Create SearchResult with prefixed text
+    score = draw(st.floats(min_value=0.1, max_value=1.0))
+    chunk = SearchResult(
+        chunk_id=f"chunk_{draw(st.integers(min_value=1, max_value=9999))}",
+        text=chunk_text,
+        metadata={"participant_name": participant_name},
+        score=score,
+    )
+
+    return chunk, participant_name
+
+
+# --- Property 18: Conditional Speaker Prefix Prompt Instruction ---
+
+
+class TestConditionalSpeakerPrefixPromptInstruction:
+    """Property 18: Conditional Speaker Prefix Prompt Instruction.
+
+    # Feature: participant-context-clarity, Property 18: Conditional Speaker Prefix Prompt Instruction
+
+    *For any* formatted context string that contains at least one line matching
+    a speaker role prefix pattern ([You]: or [{Name}]:), the system prompt SHALL
+    include an explanation of what the prefixes mean.
+
+    **Validates: Requirements 7.3**
+    """
+
+    @given(data=context_with_speaker_prefix_generator())
+    @settings(max_examples=100)
+    def test_system_prompt_explains_you_prefix(self, data):
+        """When context contains speaker prefix patterns, the system prompt
+        SHALL explain that [You]: indicates messages sent by the user.
+
+        **Validates: Requirements 7.3**
+        """
+        chunk, participant_name = data
+
+        # Verify the chunk text actually contains a prefix pattern
+        assert re.search(r"\[You\]:", chunk.text) or re.search(
+            r"\[[^\]]+\]:", chunk.text
+        )
+
+        # The system prompt must explain [You]: prefix meaning
+        assert "[You]:" in _SYSTEM_TEMPLATE, (
+            "System prompt must explain the [You]: prefix when context "
+            "contains speaker role prefix patterns."
+        )
+        assert (
+            "sent by the user" in _SYSTEM_TEMPLATE.lower()
+            or "sent by the user" in _SYSTEM_TEMPLATE
+        ), (
+            "System prompt must explain that [You]: indicates messages "
+            "sent by the user."
+        )
+
+    @given(data=context_with_speaker_prefix_generator())
+    @settings(max_examples=100)
+    def test_system_prompt_explains_participant_prefix(self, data):
+        """When context contains speaker prefix patterns, the system prompt
+        SHALL explain that [{Name}]: indicates messages received from
+        the participant.
+
+        **Validates: Requirements 7.3**
+        """
+        chunk, participant_name = data
+
+        # Verify the chunk text actually contains a prefix pattern
+        assert re.search(r"\[You\]:", chunk.text) or re.search(
+            r"\[[^\]]+\]:", chunk.text
+        )
+
+        # The system prompt must explain participant name prefix meaning
+        assert (
+            "received from" in _SYSTEM_TEMPLATE.lower()
+            or "received from" in _SYSTEM_TEMPLATE
+        ), (
+            "System prompt must explain that [{Name}]: indicates messages "
+            "received from that participant."
+        )
+
+    @given(data=context_with_speaker_prefix_generator())
+    @settings(max_examples=100)
+    def test_system_prompt_explains_message_prefix(self, data):
+        """When context contains speaker prefix patterns, the system prompt
+        SHALL explain that [Message]: indicates unknown direction.
+
+        **Validates: Requirements 7.3**
+        """
+        chunk, participant_name = data
+
+        # The system prompt must explain [Message]: prefix meaning
+        assert "[Message]:" in _SYSTEM_TEMPLATE, (
+            "System prompt must explain the [Message]: prefix for unknown "
+            "direction messages."
+        )
+        assert (
+            "unknown direction" in _SYSTEM_TEMPLATE.lower()
+            or "unknown direction" in _SYSTEM_TEMPLATE
+        ), (
+            "System prompt must explain that [Message]: indicates " "unknown direction."
+        )
+
+    @given(data=context_with_speaker_prefix_generator())
+    @settings(max_examples=100)
+    def test_system_prompt_included_when_context_has_prefixes(self, data):
+        """When formatted context contains speaker prefixes, the system
+        prompt with prefix explanations SHALL be part of the prompt template
+        used by the orchestrator.
+
+        **Validates: Requirements 7.3**
+        """
+        chunk, participant_name = data
+
+        # Create an orchestrator and verify it uses the system template
+        # that includes prefix explanations
+        mock_retriever = MagicMock()
+        mock_llm = MagicMock()
+        orchestrator = RAGOrchestrator(
+            retriever=mock_retriever,
+            llm_provider=mock_llm,
+        )
+
+        # The orchestrator's prompt template should include the system message
+        # that explains prefixes
+        prompt_messages = orchestrator._prompt_template.format_messages(
+            context=chunk.text,
+            query="test query",
+        )
+
+        # Extract the system message
+        system_messages = [msg for msg in prompt_messages if msg.type == "system"]
+        assert (
+            len(system_messages) == 1
+        ), "Orchestrator prompt template must include exactly one system message."
+
+        system_content = system_messages[0].content
+
+        # Verify the system message includes prefix explanations
+        assert (
+            "[You]:" in system_content
+        ), "System message in prompt must mention [You]: prefix."
+        assert (
+            "received from" in system_content.lower()
+            or "received from" in system_content
+        ), "System message in prompt must explain name prefix meaning."
+
+    @given(data=context_with_speaker_prefix_generator())
+    @settings(max_examples=100)
+    def test_formatted_context_preserves_prefix_patterns(self, data):
+        """The Context_Formatter SHALL preserve speaker prefix patterns
+        in the formatted output when they exist in the source text.
+
+        **Validates: Requirements 7.3**
+        """
+        chunk, participant_name = data
+
+        orchestrator = RAGOrchestrator(
+            retriever=MagicMock(),
+            llm_provider=MagicMock(),
+        )
+
+        formatted = orchestrator._format_context([chunk])
+
+        # The formatted context should still contain the prefix patterns
+        # from the original chunk text
+        has_you_prefix = "[You]:" in chunk.text
+        has_name_prefix = bool(
+            re.search(r"\[[^\]]+\]:", chunk.text)
+            and "[You]:" not in chunk.text
+            and "[Message]:" not in chunk.text
+        ) or (re.search(r"\[[^\]]+\]:", chunk.text) and "[You]:" in chunk.text)
+
+        if has_you_prefix:
+            assert (
+                "[You]:" in formatted
+            ), "Formatted context must preserve [You]: prefix patterns."
+
+        # The chunk text itself should appear in the formatted output
+        assert chunk.text in formatted, (
+            "Formatted context must include the original chunk text "
+            "containing speaker prefixes."
+        )
+
+
+# --- Task 9.1: Mixed-Format Context Backward Compatibility ---
+# Validates: Requirements 6.1, 6.2, 6.5
+
+
+@st.composite
+def prefixed_text_generator(draw):
+    """Generate text that contains speaker role prefix patterns (new-format chunks).
+
+    Simulates chunks produced after speaker role tagging was implemented.
+    """
+    participant_name = draw(
+        st.sampled_from(["Alice", "Bob", "Charlie", "Diana", "Kyriaki Salavanitou"])
+    )
+    # Generate 1-5 prefixed message lines
+    num_lines = draw(st.integers(min_value=1, max_value=5))
+    lines = []
+    for _ in range(num_lines):
+        msg_text = draw(
+            st.text(
+                min_size=3,
+                max_size=60,
+                alphabet=st.characters(
+                    whitelist_categories=("L", "N", "Z"),
+                    blacklist_characters="\x00\n[]:",
+                ),
+            ).filter(lambda s: s.strip())
+        )
+        prefix_type = draw(st.sampled_from(["you", "name", "message"]))
+        if prefix_type == "you":
+            lines.append(f"[You]: {msg_text}")
+        elif prefix_type == "name":
+            lines.append(f"[{participant_name}]: {msg_text}")
+        else:
+            lines.append(f"[Message]: {msg_text}")
+
+    return "\n".join(lines), participant_name
+
+
+@st.composite
+def mixed_format_search_results_generator(draw):
+    """Generate a list of SearchResults with a mix of old-format (plain text)
+    and new-format (speaker-prefixed) chunks.
+
+    Ensures at least one of each format is present.
+    """
+    # Generate 1-4 old-format (plain text) chunks
+    num_old = draw(st.integers(min_value=1, max_value=4))
+    old_chunks = []
+    for i in range(num_old):
+        text = draw(plain_text_generator())
+        participant = draw(st.sampled_from(["Alice", "Bob", "Charlie"]))
+        score = draw(
+            st.floats(
+                min_value=0.01, max_value=1.0, allow_nan=False, allow_infinity=False
+            )
+        )
+        has_dates = draw(st.booleans())
+        metadata: dict = {
+            "participant_name": participant,
+            "source_filename": f"{participant.lower()}.pdf",
+        }
+        if has_dates:
+            metadata["date_range_start"] = f"2024-01-{(i + 1):02d}"
+            metadata["date_range_end"] = f"2024-01-{(i + 2):02d}"
+        old_chunks.append(
+            SearchResult(
+                chunk_id=f"old_chunk_{i}",
+                text=text,
+                metadata=metadata,
+                score=score,
+            )
+        )
+
+    # Generate 1-4 new-format (prefixed) chunks
+    num_new = draw(st.integers(min_value=1, max_value=4))
+    new_chunks = []
+    for i in range(num_new):
+        prefixed_text, participant_name = draw(prefixed_text_generator())
+        score = draw(
+            st.floats(
+                min_value=0.01, max_value=1.0, allow_nan=False, allow_infinity=False
+            )
+        )
+        has_dates = draw(st.booleans())
+        metadata: dict = {
+            "participant_name": participant_name,
+            "source_filename": f"{participant_name.lower().replace(' ', '_')}.pdf",
+        }
+        if has_dates:
+            metadata["date_range_start"] = f"2024-02-{(i + 1):02d}"
+            metadata["date_range_end"] = f"2024-02-{(i + 2):02d}"
+        new_chunks.append(
+            SearchResult(
+                chunk_id=f"new_chunk_{i}",
+                text=prefixed_text,
+                metadata=metadata,
+                score=score,
+            )
+        )
+
+    # Shuffle both together
+    all_chunks = old_chunks + new_chunks
+    shuffled = draw(st.permutations(all_chunks))
+    return list(shuffled)
+
+
+class TestMixedFormatContextBackwardCompatibility:
+    """Task 9.1: Verify orchestrator handles mixed-format context without errors.
+
+    Tests that `_format_context` works when some SearchResults have prefixed text
+    (speaker role prefixes like [You]:, [Name]:, [Message]:) and others have
+    plain text without any prefixes.
+
+    Tests that `query()` returns valid GenerationResult with non-empty text
+    and non-empty source_chunks regardless of prefix presence.
+
+    **Validates: Requirements 6.1, 6.2, 6.5**
+    """
+
+    @given(chunks=mixed_format_search_results_generator())
+    @settings(max_examples=100)
+    def test_format_context_handles_mixed_formats_without_error(self, chunks):
+        """_format_context SHALL process a mix of old-format and new-format
+        chunks without raising any errors.
+
+        **Validates: Requirements 6.5**
+        """
+        orchestrator = RAGOrchestrator(
+            retriever=MagicMock(),
+            llm_provider=MagicMock(),
+        )
+
+        # Should not raise any exception
+        formatted = orchestrator._format_context(chunks)
+
+        # Output should be a non-empty string
+        assert isinstance(formatted, str)
+        assert (
+            len(formatted) > 0
+        ), "Formatted context should be non-empty when given mixed-format chunks."
+
+    @given(chunks=mixed_format_search_results_generator())
+    @settings(max_examples=100)
+    def test_old_chunks_pass_through_verbatim_in_mixed_context(self, chunks):
+        """Old chunks (without prefixes) SHALL pass through verbatim in their
+        participant section even when mixed with new-format chunks.
+
+        **Validates: Requirements 6.1**
+        """
+        # Identify old-format chunks (those without speaker prefix patterns)
+        old_chunks = [c for c in chunks if not _SPEAKER_PREFIX_PATTERN.search(c.text)]
+        assume(len(old_chunks) >= 1)
+
+        # Ensure distinct texts for unambiguous lookup
+        all_texts = [c.text for c in chunks]
+        assume(len(set(all_texts)) == len(all_texts))
+
+        orchestrator = RAGOrchestrator(
+            retriever=MagicMock(),
+            llm_provider=MagicMock(),
+        )
+
+        formatted = orchestrator._format_context(chunks)
+
+        # Each old-format chunk text should appear verbatim
+        for chunk in old_chunks:
+            assert chunk.text in formatted, (
+                f"Old-format chunk text '{chunk.text[:50]}...' was not found "
+                f"verbatim in mixed-format output. The formatter may have "
+                f"modified it.\nOutput:\n{formatted[:500]}"
+            )
+
+    @given(chunks=mixed_format_search_results_generator())
+    @settings(max_examples=100)
+    def test_new_chunks_preserved_in_mixed_context(self, chunks):
+        """New chunks (with speaker prefixes) SHALL also be preserved in
+        the formatted output alongside old chunks.
+
+        **Validates: Requirements 6.5**
+        """
+        # Identify new-format chunks (those with speaker prefix patterns)
+        new_chunks = [c for c in chunks if _SPEAKER_PREFIX_PATTERN.search(c.text)]
+        assume(len(new_chunks) >= 1)
+
+        # Ensure distinct texts
+        all_texts = [c.text for c in chunks]
+        assume(len(set(all_texts)) == len(all_texts))
+
+        orchestrator = RAGOrchestrator(
+            retriever=MagicMock(),
+            llm_provider=MagicMock(),
+        )
+
+        formatted = orchestrator._format_context(chunks)
+
+        # Each new-format chunk text should appear in the output
+        for chunk in new_chunks:
+            assert chunk.text in formatted, (
+                f"New-format chunk text '{chunk.text[:50]}...' was not found "
+                f"in mixed-format output.\nOutput:\n{formatted[:500]}"
+            )
+
+    @given(chunks=mixed_format_search_results_generator())
+    @settings(max_examples=100)
+    def test_no_prefix_injected_into_old_chunks_in_mixed_context(self, chunks):
+        """The Context_Formatter SHALL NOT inject speaker role prefixes into
+        old-format text that originally lacks them, even when new-format
+        chunks are present in the same context.
+
+        **Validates: Requirements 6.1**
+        """
+        old_chunks = [c for c in chunks if not _SPEAKER_PREFIX_PATTERN.search(c.text)]
+        assume(len(old_chunks) >= 1)
+
+        # Ensure distinct texts and that no old chunk text is a substring
+        # of any other chunk text (avoids false positives from find())
+        all_texts = [c.text for c in chunks]
+        assume(len(set(all_texts)) == len(all_texts))
+        for old_c in old_chunks:
+            for other_c in chunks:
+                if other_c.chunk_id != old_c.chunk_id:
+                    assume(old_c.text not in other_c.text)
+
+        orchestrator = RAGOrchestrator(
+            retriever=MagicMock(),
+            llm_provider=MagicMock(),
+        )
+
+        formatted = orchestrator._format_context(chunks)
+
+        for chunk in old_chunks:
+            pos = formatted.find(chunk.text)
+            assert (
+                pos != -1
+            ), f"Old-format chunk '{chunk.text[:40]}...' not found in output."
+
+            # Check that no speaker prefix was injected on the line before this text
+            lookback_start = max(0, pos - 50)
+            preceding = formatted[lookback_start:pos]
+            last_line = (
+                preceding.rsplit("\n", 1)[-1] if "\n" in preceding else preceding
+            )
+
+            assert not _SPEAKER_PREFIX_PATTERN.search(last_line), (
+                f"A speaker role prefix was injected before old-format chunk "
+                f"'{chunk.text[:40]}...' in mixed context.\n"
+                f"Preceding content on same line: '{last_line}'"
+            )
+
+    @given(
+        chunks=mixed_format_search_results_generator(),
+        llm_response=llm_response_generator(),
+    )
+    @settings(max_examples=100)
+    def test_query_returns_valid_generation_result_with_mixed_chunks(
+        self, chunks, llm_response
+    ):
+        """query() SHALL return a valid GenerationResult with non-empty text
+        and non-empty source_chunks regardless of whether retrieved context
+        contains speaker role prefixes, lacks them, or has a mix.
+
+        **Validates: Requirements 6.2**
+        """
+        mock_retriever = _create_mock_retriever(chunks)
+        mock_llm = _create_mock_llm_provider(llm_response)
+
+        orchestrator = RAGOrchestrator(
+            retriever=mock_retriever,
+            llm_provider=mock_llm,
+            max_context_chunks=20,
+        )
+
+        result = orchestrator.query("What did Alice say?")
+
+        # Result must be a valid GenerationResult
+        assert isinstance(result, GenerationResult)
+        assert (
+            result.text
+        ), "GenerationResult.text should be non-empty with mixed-format chunks."
+        assert len(result.text) > 0
+        assert result.source_chunks, (
+            "GenerationResult.source_chunks should be non-empty "
+            "with mixed-format chunks."
+        )
+        assert len(result.source_chunks) > 0
+
+    @given(
+        chunks=st.lists(
+            search_result_without_prefix_generator(),
+            min_size=1,
+            max_size=8,
+        ),
+        llm_response=llm_response_generator(),
+    )
+    @settings(max_examples=100)
+    def test_query_returns_valid_result_with_only_old_chunks(
+        self, chunks, llm_response
+    ):
+        """query() SHALL return valid GenerationResult even when ALL chunks
+        are old-format (no speaker prefixes).
+
+        **Validates: Requirements 6.2**
+        """
+        mock_retriever = _create_mock_retriever(chunks)
+        mock_llm = _create_mock_llm_provider(llm_response)
+
+        orchestrator = RAGOrchestrator(
+            retriever=mock_retriever,
+            llm_provider=mock_llm,
+            max_context_chunks=20,
+        )
+
+        result = orchestrator.query("Tell me about the conversation")
+
+        assert isinstance(result, GenerationResult)
+        assert (
+            result.text
+        ), "GenerationResult.text should be non-empty with old-format chunks."
+        assert result.source_chunks, (
+            "GenerationResult.source_chunks should be non-empty "
+            "with old-format chunks."
+        )
+
+    @given(chunks=mixed_format_search_results_generator())
+    @settings(max_examples=100)
+    def test_all_chunks_included_in_mixed_format_output(self, chunks):
+        """_format_context SHALL include all input passages without discarding
+        any, regardless of whether they have prefixes or not.
+
+        **Validates: Requirements 6.5**
+        """
+        orchestrator = RAGOrchestrator(
+            retriever=MagicMock(),
+            llm_provider=MagicMock(),
+        )
+
+        formatted = orchestrator._format_context(chunks)
+
+        # Every chunk text must appear in the formatted output
+        for chunk in chunks:
+            assert chunk.text in formatted, (
+                f"Chunk '{chunk.text[:50]}...' (format: "
+                f"{'new' if _SPEAKER_PREFIX_PATTERN.search(chunk.text) else 'old'}) "
+                f"was discarded from mixed-format output."
+            )
