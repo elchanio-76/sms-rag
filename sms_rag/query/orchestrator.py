@@ -14,7 +14,15 @@ from sms_rag.shared.models import GenerationResult, SearchResult
 
 _SYSTEM_TEMPLATE = (
     "You are a helpful assistant that answers questions about SMS and WhatsApp "
-    "conversations. In each conversation snippet the second party is always the user. "
+    "conversations. "
+    "Each '## Conversation with ...' section represents a separate, private "
+    "conversation between the user and the named participant. "
+    "Participants did NOT converse with each other — all messages in a section "
+    "are exclusively between the user and that specific participant. "
+    "Lines prefixed with [You]: are messages sent by the user. "
+    "Lines prefixed with a name (e.g., [Kyriaki]: ) are messages received from "
+    "that participant. "
+    "Lines prefixed with [Message]: have unknown direction. "
     "Use ONLY the provided conversation passages to answer the user's question. "
     "If the answer cannot be found in the passages, say so clearly. "
     "When referencing information, mention the participant name and approximate date "
@@ -112,26 +120,78 @@ class RAGOrchestrator:
         )
 
     def _format_context(self, chunks: list[SearchResult]) -> str:
-        """Format search result chunks into a context string with source refs.
+        """Format search results grouped by participant with structural headers.
 
-        Each passage includes the participant name and date range extracted
-        from chunk metadata for attribution.
+        Groups passages by participant_name metadata, orders sections by
+        highest max score descending, and orders passages within each section
+        chronologically (dated ascending, undated after dated).
 
         Args:
             chunks: List of SearchResult objects to format.
 
         Returns:
-            Formatted context string with numbered passages and source info.
+            Formatted context string with participant sections separated by
+            horizontal rules.
         """
         if not chunks:
             return "No relevant conversation passages found."
 
-        passages = []
-        for i, chunk in enumerate(chunks, 1):
-            source_info = self._extract_source_info(chunk)
-            passages.append(f"[Passage {i}] ({source_info})\n{chunk.text}")
+        # Group passages by participant_name
+        groups: dict[str, list[SearchResult]] = {}
+        for chunk in chunks:
+            participant = chunk.metadata.get("participant_name", "Unknown")
+            groups.setdefault(participant, []).append(chunk)
 
-        return "\n\n---\n\n".join(passages)
+        # Order participant sections by highest score descending
+        sorted_participants = sorted(
+            groups.keys(),
+            key=lambda p: max(c.score for c in groups[p]),
+            reverse=True,
+        )
+
+        sections = []
+        for participant in sorted_participants:
+            section_chunks = groups[participant]
+
+            # Sort passages within section: dated first (ascending), then undated
+            dated = [c for c in section_chunks if c.metadata.get("date_range_start")]
+            undated = [
+                c for c in section_chunks if not c.metadata.get("date_range_start")
+            ]
+            dated.sort(key=lambda c: c.metadata["date_range_start"])
+            ordered_chunks = dated + undated
+
+            # Build section
+            header = f"## Conversation with {participant} (Your private conversation)"
+            passages = []
+            for chunk in ordered_chunks:
+                date_label = self._format_date_label(chunk)
+                passage_text = (
+                    f"{date_label}\n{chunk.text}" if date_label else chunk.text
+                )
+                passages.append(passage_text)
+
+            section_body = "\n\n".join(passages)
+            sections.append(f"{header}\n\n{section_body}")
+
+        return "\n\n---\n\n".join(sections)
+
+    @staticmethod
+    def _format_date_label(chunk: SearchResult) -> str | None:
+        """Format date range label for a passage, or None if no dates.
+
+        Args:
+            chunk: A SearchResult with potential date metadata.
+
+        Returns:
+            A formatted date label like "[2024-01-01 to 2024-01-15]",
+            or None if the chunk lacks both date_range_start and date_range_end.
+        """
+        start = chunk.metadata.get("date_range_start")
+        end = chunk.metadata.get("date_range_end")
+        if start and end:
+            return f"[{start} to {end}]"
+        return None
 
     @staticmethod
     def _extract_source_info(chunk: SearchResult) -> str:

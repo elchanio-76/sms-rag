@@ -141,10 +141,10 @@ class TestRAGOrchestrator:
         assert "Maria" in context
         assert "2024-03-01" in context
         assert "2024-03-10" in context
-        assert "[Passage 1]" in context
+        assert "## Conversation with Maria (Your private conversation)" in context
 
     def test_format_context_with_partial_dates(self):
-        """_format_context should handle missing date_start or date_end."""
+        """_format_context should handle missing date_end (no date label shown)."""
         chunk_no_end = SearchResult(
             chunk_id="c1",
             text="text",
@@ -157,7 +157,8 @@ class TestRAGOrchestrator:
         )
         context = self.orchestrator._format_context([chunk_no_end])
         assert "Bob" in context
-        assert "from 2024-01-01" in context
+        # With the new format, partial dates (missing end) don't produce a date label
+        assert "## Conversation with Bob (Your private conversation)" in context
 
     def test_format_context_no_dates(self):
         """_format_context should fall back to participant name only."""

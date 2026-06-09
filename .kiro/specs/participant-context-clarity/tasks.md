@@ -127,11 +127,11 @@ This implementation improves RAG context presentation through two complementary 
     - Assert chunks have all lines prefixed with `[Message]:`, non-empty text, non-empty participant_name, message_count > 0
     - Place test in `tests/test_property_chunker.py`
 
-- [ ] 6. Checkpoint - Ensure all chunker tests pass
+- [x] 6. Checkpoint - Ensure all chunker tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Rewrite Context Formatter with participant grouping
-  - [ ] 7.1 Implement participant-grouped `_format_context` and `_format_date_label` in RAGOrchestrator
+- [-] 7. Rewrite Context Formatter with participant grouping
+  - [x] 7.1 Implement participant-grouped `_format_context` and `_format_date_label` in RAGOrchestrator
     - Replace existing `_format_context` method with new implementation that groups chunks by `participant_name` metadata
     - Order participant sections by highest max score descending
     - Within each section: sort dated passages ascending by date_range_start, undated passages placed after dated
@@ -142,72 +142,72 @@ This implementation improves RAG context presentation through two complementary 
     - Implement `_format_date_label(chunk: SearchResult) -> str | None`
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8_
 
-  - [ ] 7.2 Write property test for Participant Grouping Completeness
+  - [x] 7.2 Write property test for Participant Grouping Completeness
     - **Property 1: Participant Grouping Completeness**
     - **Validates: Requirements 1.1, 1.6**
     - Generate SearchResult lists with varying participant_name metadata
     - Assert every input passage appears exactly once in formatted output, grouped under correct header
     - Place test in `tests/test_property_orchestrator.py`
 
-  - [ ] 7.3 Write property test for Participant Section Header Format
+  - [x] 7.3 Write property test for Participant Section Header Format
     - **Property 2: Participant Section Header Format**
     - **Validates: Requirements 1.2**
     - Generate participant name strings; assert section headers match `## Conversation with {name} (Your private conversation)`
     - Place test in `tests/test_property_orchestrator.py`
 
-  - [ ] 7.4 Write property test for Section Separation
+  - [x] 7.4 Write property test for Section Separation
     - **Property 3: Section Separation**
     - **Validates: Requirements 1.3**
     - Generate SearchResults from 2+ participants; assert `---` between adjacent sections but not before first or after last
     - Place test in `tests/test_property_orchestrator.py`
 
-  - [ ] 7.5 Write property test for Chronological Ordering Within Participant Sections
+  - [x] 7.5 Write property test for Chronological Ordering Within Participant Sections
     - **Property 4: Chronological Ordering Within Participant Sections**
     - **Validates: Requirements 1.4, 1.7**
     - Generate same-participant results with varying dates; assert dated passages are in ascending order, undated after dated
     - Place test in `tests/test_property_orchestrator.py`
 
-  - [ ] 7.6 Write property test for Participant Section Ordering by Score
+  - [x] 7.6 Write property test for Participant Section Ordering by Score
     - **Property 5: Participant Section Ordering by Score**
     - **Validates: Requirements 1.8**
     - Generate multi-participant results with varying scores; assert sections appear in descending max-score order
     - Place test in `tests/test_property_orchestrator.py`
 
-  - [ ] 7.7 Write property test for Date Range Annotation Format
+  - [x] 7.7 Write property test for Date Range Annotation Format
     - **Property 6: Date Range Annotation Format**
     - **Validates: Requirements 1.5**
     - Generate SearchResults with and without date metadata; assert format `[YYYY-MM-DD to YYYY-MM-DD]` or no annotation
     - Place test in `tests/test_property_orchestrator.py`
 
-  - [ ] 7.8 Write property test for Backward-Compatible Chunk Presentation
+  - [x] 7.8 Write property test for Backward-Compatible Chunk Presentation
     - **Property 16: Backward-Compatible Chunk Presentation**
     - **Validates: Requirements 6.1**
     - Generate SearchResults whose text lacks speaker prefix patterns; assert text passes through verbatim
     - Place test in `tests/test_property_orchestrator.py`
 
-- [ ] 8. Update system prompt and conditional prefix instruction
-  - [ ] 8.1 Update `_SYSTEM_TEMPLATE` and add conditional prefix explanation
+- [-] 8. Update system prompt and conditional prefix instruction
+  - [x] 8.1 Update `_SYSTEM_TEMPLATE` and add conditional prefix explanation
     - Replace existing `_SYSTEM_TEMPLATE` with the new prompt that explains `## Conversation with ...` sections as separate private conversations
     - Include statement that participants did not converse with each other
     - Include explanation of `[You]:` and `[{Name}]:` prefixes
     - Ensure the system prompt is always included regardless of whether current context has prefixes (handles mixed data)
     - _Requirements: 7.1, 7.2, 7.3, 7.4_
 
-  - [ ] 8.2 Write property test for Conditional Speaker Prefix Prompt Instruction
+  - [~] 8.2 Write property test for Conditional Speaker Prefix Prompt Instruction
     - **Property 18: Conditional Speaker Prefix Prompt Instruction**
     - **Validates: Requirements 7.3**
     - Generate formatted context containing at least one speaker prefix pattern
     - Assert the system prompt includes explanation of prefix meaning
     - Place test in `tests/test_property_orchestrator.py`
 
-- [ ] 9. Ensure backward compatibility with mixed old/new chunks
-  - [ ] 9.1 Verify orchestrator handles mixed-format context without errors
+- [-] 9. Ensure backward compatibility with mixed old/new chunks
+  - [~] 9.1 Verify orchestrator handles mixed-format context without errors
     - Ensure `_format_context` works when some SearchResults have prefixed text and others have plain text
     - Ensure `query()` returns valid `GenerationResult` with non-empty `text` and non-empty `source_chunks` regardless of prefix presence
     - Old chunks (without prefixes) pass through verbatim in their participant section
     - _Requirements: 6.1, 6.2, 6.5_
 
-- [ ] 10. Final checkpoint - Ensure all tests pass
+- [~] 10. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
